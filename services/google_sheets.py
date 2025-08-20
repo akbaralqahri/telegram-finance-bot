@@ -86,6 +86,10 @@ class GoogleSheetsService:
                 # Try to open existing spreadsheet
                 spreadsheet = self.gc.open(spreadsheet_name)
                 logger.info(f"Found existing spreadsheet for user {user_id}")
+                
+                # Verify and fix sheet structure if needed
+                await self._verify_and_fix_sheet_structure(spreadsheet)
+                
             except gspread.SpreadsheetNotFound:
                 # Create new spreadsheet
                 spreadsheet = self.gc.create(spreadsheet_name)
@@ -103,6 +107,67 @@ class GoogleSheetsService:
             logger.error(f"Error initializing user sheet for {user_id}: {e}")
             return False
     
+    async def _verify_and_fix_sheet_structure(self, spreadsheet):
+        """Verify and fix existing spreadsheet structure"""
+        try:
+            # Check if Transactions sheet exists and has proper headers
+            try:
+                transactions_sheet = spreadsheet.worksheet('Transactions')
+                
+                # Get first row to check headers
+                first_row = transactions_sheet.row_values(1)
+                expected_headers = Config.TRANSACTION_HEADERS
+                
+                # If headers don't match, update them
+                if first_row != expected_headers:
+                    logger.info("Updating transaction headers")
+                    transactions_sheet.update('1:1', [expected_headers])
+                    
+            except gspread.WorksheetNotFound:
+                # Rename first sheet to Transactions if it doesn't exist
+                logger.info("Creating Transactions sheet")
+                transactions_sheet = spreadsheet.sheet1
+                transactions_sheet.update_title('Transactions')
+                transactions_sheet.update('1:1', [Config.TRANSACTION_HEADERS])
+            
+            # Check Categories sheet
+            try:
+                categories_sheet = spreadsheet.worksheet('Categories')
+                first_row = categories_sheet.row_values(1)
+                if first_row != Config.CATEGORY_HEADERS:
+                    categories_sheet.update('1:1', [Config.CATEGORY_HEADERS])
+            except gspread.WorksheetNotFound:
+                logger.info("Creating Categories sheet")
+                categories_sheet = spreadsheet.add_worksheet(title='Categories', rows=100, cols=10)
+                categories_sheet.update('1:1', [Config.CATEGORY_HEADERS])
+                
+                # Add default categories
+                for cat_type, categories in Config.DEFAULT_CATEGORIES.items():
+                    for cat in categories:
+                        categories_sheet.append_row([
+                            cat['name'],
+                            cat_type,
+                            ','.join(cat['keywords']),
+                            cat['icon']
+                        ])
+            
+            # Check Monthly Summary sheet
+            try:
+                summary_sheet = spreadsheet.worksheet('Monthly_Summary')
+                first_row = summary_sheet.row_values(1)
+                if first_row != Config.SUMMARY_HEADERS:
+                    summary_sheet.update('1:1', [Config.SUMMARY_HEADERS])
+            except gspread.WorksheetNotFound:
+                logger.info("Creating Monthly_Summary sheet")
+                summary_sheet = spreadsheet.add_worksheet(title='Monthly_Summary', rows=100, cols=10)
+                summary_sheet.update('1:1', [Config.SUMMARY_HEADERS])
+            
+            logger.info("Sheet structure verified and fixed")
+            
+        except Exception as e:
+            logger.error(f"Error verifying sheet structure: {e}")
+            raise
+    
     async def _setup_initial_sheets(self, spreadsheet):
         """Setup initial sheets with headers and sample data"""
         try:
@@ -111,11 +176,11 @@ class GoogleSheetsService:
             transactions_sheet.update_title('Transactions')
             
             # Add headers to transactions sheet
-            transactions_sheet.append_row(Config.TRANSACTION_HEADERS)
+            transactions_sheet.update('1:1', [Config.TRANSACTION_HEADERS])
             
             # Create Categories sheet
             categories_sheet = spreadsheet.add_worksheet(title='Categories', rows=100, cols=10)
-            categories_sheet.append_row(Config.CATEGORY_HEADERS)
+            categories_sheet.update('1:1', [Config.CATEGORY_HEADERS])
             
             # Add default categories
             for cat_type, categories in Config.DEFAULT_CATEGORIES.items():
@@ -129,7 +194,7 @@ class GoogleSheetsService:
             
             # Create Summary sheet
             summary_sheet = spreadsheet.add_worksheet(title='Monthly_Summary', rows=100, cols=10)
-            summary_sheet.append_row(Config.SUMMARY_HEADERS)
+            summary_sheet.update('1:1', [Config.SUMMARY_HEADERS])
             
             # Format headers (make them bold)
             for sheet in [transactions_sheet, categories_sheet, summary_sheet]:
@@ -147,7 +212,9 @@ class GoogleSheetsService:
         try:
             # Ensure user sheet exists
             if user_id not in self.user_sheets:
-                return False
+                success = await self.initialize_user_sheet(user_id, f"User_{user_id}")
+                if not success:
+                    return False
             
             spreadsheet = self.user_sheets[user_id]
             transactions_sheet = spreadsheet.worksheet('Transactions')
@@ -200,25 +267,38 @@ class GoogleSheetsService:
             spreadsheet = self.user_sheets[user_id]
             transactions_sheet = spreadsheet.worksheet('Transactions')
             
-            # Get all records
-            records = transactions_sheet.get_all_records()
+            # Get all values instead of records to avoid parsing issues
+            all_values = transactions_sheet.get_all_values()
             
-            # Check if there are any records (excluding header)
-            if not records or len(records) == 0:
-                logger.info(f"No transactions found for user {user_id}, returning balance 0")
+            # Check if there are any data rows (more than just header)
+            if len(all_values) <= 1:
+                logger.info(f"No transaction data for user {user_id}, returning balance 0")
                 return 0.0
             
-            # Get the last balance value
-            last_record = records[-1]
-            balance = last_record.get('Saldo', 0)
+            # Get the last row (skip header at index 0)
+            data_rows = all_values[1:]  # Skip header
+            if not data_rows:
+                return 0.0
             
-            # Convert to float if it's a string
-            if isinstance(balance, str):
-                if balance.strip() == '':
-                    return 0.0
-                balance = parse_amount(balance) or 0
+            # Find the last non-empty row
+            last_row = None
+            for row in reversed(data_rows):
+                if any(cell.strip() for cell in row if cell):  # Check if row has any non-empty cells
+                    last_row = row
+                    break
             
-            return float(balance)
+            if not last_row or len(last_row) < 7:  # Balance is at index 6
+                return 0.0
+            
+            # Get balance from last row (index 6 is Saldo column)
+            balance_str = last_row[6] if len(last_row) > 6 else '0'
+            
+            if not balance_str or balance_str.strip() == '':
+                return 0.0
+            
+            # Parse balance
+            balance = parse_amount(balance_str)
+            return float(balance) if balance is not None else 0.0
             
         except Exception as e:
             logger.error(f"Error getting balance for user {user_id}: {e}")
@@ -233,29 +313,46 @@ class GoogleSheetsService:
             spreadsheet = self.user_sheets[user_id]
             transactions_sheet = spreadsheet.worksheet('Transactions')
             
-            # Get all records for the specified month
-            records = transactions_sheet.get_all_records()
+            # Get all values instead of records
+            all_values = transactions_sheet.get_all_values()
             
-            # Check if there are any records
-            if not records or len(records) == 0:
-                logger.info(f"No transactions found for user {user_id} in {month}/{year}")
+            # Check if there are any data rows
+            if len(all_values) <= 1:
+                logger.info(f"No transaction data for user {user_id} in {month}/{year}")
+                return {'income': 0, 'expense': 0, 'net': 0}
+            
+            # Get headers and data
+            headers = all_values[0]
+            data_rows = all_values[1:]
+            
+            # Find column indices
+            try:
+                date_idx = headers.index('Tanggal')
+                income_idx = headers.index('Pemasukan')
+                expense_idx = headers.index('Pengeluaran')
+            except ValueError as e:
+                logger.error(f"Header not found: {e}")
                 return {'income': 0, 'expense': 0, 'net': 0}
             
             total_income = 0
             total_expense = 0
             
-            for record in records:
+            for row in data_rows:
+                if len(row) <= max(date_idx, income_idx, expense_idx):
+                    continue
+                
                 try:
                     # Parse date
-                    date_str = record.get('Tanggal', '')
-                    if not date_str:
+                    date_str = row[date_idx] if date_idx < len(row) else ''
+                    if not date_str or date_str.strip() == '':
                         continue
                         
-                    record_date = datetime.strptime(date_str, '%Y-%m-%d')
+                    record_date = datetime.strptime(date_str.strip(), '%Y-%m-%d')
                     
                     if record_date.year == year and record_date.month == month:
-                        income_str = str(record.get('Pemasukan', ''))
-                        expense_str = str(record.get('Pengeluaran', ''))
+                        # Parse income and expense
+                        income_str = row[income_idx] if income_idx < len(row) else ''
+                        expense_str = row[expense_idx] if expense_idx < len(row) else ''
                         
                         income = parse_amount(income_str) if income_str and income_str.strip() else 0
                         expense = parse_amount(expense_str) if expense_str and expense_str.strip() else 0
@@ -263,8 +360,8 @@ class GoogleSheetsService:
                         total_income += income or 0
                         total_expense += expense or 0
                         
-                except (ValueError, KeyError) as e:
-                    logger.warning(f"Error parsing record for user {user_id}: {e}")
+                except (ValueError, IndexError) as e:
+                    logger.warning(f"Error parsing row for user {user_id}: {e}")
                     continue
             
             return {
@@ -281,32 +378,26 @@ class GoogleSheetsService:
         """Generate financial report"""
         try:
             if user_id not in self.user_sheets:
-                return {
-                    'total_income': 0,
-                    'total_expense': 0,
-                    'net_amount': 0,
-                    'current_balance': 0,
-                    'top_expenses': [],
-                    'transactions': [],
-                    'period': report_type
-                }
+                return self._empty_report(report_type)
             
             spreadsheet = self.user_sheets[user_id]
             transactions_sheet = spreadsheet.worksheet('Transactions')
-            records = transactions_sheet.get_all_records()
             
-            # Check if there are any records
-            if not records or len(records) == 0:
-                logger.info(f"No transactions found for user {user_id} report")
-                return {
-                    'total_income': 0,
-                    'total_expense': 0,
-                    'net_amount': 0,
-                    'current_balance': 0,
-                    'top_expenses': [],
-                    'transactions': [],
-                    'period': report_type
-                }
+            # Get all values instead of records
+            all_values = transactions_sheet.get_all_values()
+            
+            # Check if there are any data rows
+            if len(all_values) <= 1:
+                logger.info(f"No transaction data for user {user_id} report")
+                return self._empty_report(report_type)
+            
+            # Convert to records format for easier processing
+            headers = all_values[0]
+            records = []
+            for row in all_values[1:]:
+                if len(row) >= len(headers):
+                    record = dict(zip(headers, row))
+                    records.append(record)
             
             # Filter records based on report type
             filtered_records = self._filter_records_by_period(records, report_type)
@@ -370,15 +461,19 @@ class GoogleSheetsService:
             
         except Exception as e:
             logger.error(f"Error generating report for user {user_id}: {e}")
-            return {
-                'total_income': 0,
-                'total_expense': 0,
-                'net_amount': 0,
-                'current_balance': 0,
-                'top_expenses': [],
-                'transactions': [],
-                'period': report_type
-            }
+            return self._empty_report(report_type)
+    
+    def _empty_report(self, report_type: str) -> Dict:
+        """Return empty report structure"""
+        return {
+            'total_income': 0,
+            'total_expense': 0,
+            'net_amount': 0,
+            'current_balance': 0,
+            'top_expenses': [],
+            'transactions': [],
+            'period': report_type
+        }
     
     async def search_transactions(self, user_id: int, query: str) -> List[Dict]:
         """Search transactions based on query"""
@@ -388,10 +483,20 @@ class GoogleSheetsService:
             
             spreadsheet = self.user_sheets[user_id]
             transactions_sheet = spreadsheet.worksheet('Transactions')
-            records = transactions_sheet.get_all_records()
             
-            if not records or len(records) == 0:
+            # Get all values
+            all_values = transactions_sheet.get_all_values()
+            
+            if len(all_values) <= 1:
                 return []
+            
+            # Convert to records
+            headers = all_values[0]
+            records = []
+            for row in all_values[1:]:
+                if len(row) >= len(headers):
+                    record = dict(zip(headers, row))
+                    records.append(record)
             
             results = []
             query_lower = query.lower()
@@ -445,10 +550,20 @@ class GoogleSheetsService:
             
             spreadsheet = self.user_sheets[user_id]
             transactions_sheet = spreadsheet.worksheet('Transactions')
-            records = transactions_sheet.get_all_records()
             
-            if not records or len(records) == 0:
+            # Get all values
+            all_values = transactions_sheet.get_all_values()
+            
+            if len(all_values) <= 1:
                 return []
+            
+            # Convert to records
+            headers = all_values[0]
+            records = []
+            for row in all_values[1:]:
+                if len(row) >= len(headers):
+                    record = dict(zip(headers, row))
+                    records.append(record)
             
             target_date = date.strftime('%Y-%m-%d')
             daily_transactions = []
@@ -496,8 +611,21 @@ class GoogleSheetsService:
             
             try:
                 categories_sheet = spreadsheet.worksheet('Categories')
-                records = categories_sheet.get_all_records()
-                return records
+                all_values = categories_sheet.get_all_values()
+                
+                if len(all_values) <= 1:
+                    return []
+                
+                # Convert to records
+                headers = all_values[0]
+                categories = []
+                for row in all_values[1:]:
+                    if len(row) >= len(headers):
+                        record = dict(zip(headers, row))
+                        categories.append(record)
+                
+                return categories
+                
             except gspread.WorksheetNotFound:
                 logger.warning(f"Categories sheet not found for user {user_id}")
                 return []
@@ -561,34 +689,55 @@ class GoogleSheetsService:
             
             period_key = f"{date.year}-{date.month:02d}"
             
-            # Get existing records
-            records = summary_sheet.get_all_records()
+            # Get all values
+            all_values = summary_sheet.get_all_values()
+            
+            if len(all_values) <= 1:
+                # No data, create first record
+                if transaction_type == 'income':
+                    income = amount
+                    expense = 0
+                else:
+                    income = 0
+                    expense = amount
+                
+                balance = income - expense
+                summary_sheet.append_row([period_key, income, expense, balance, user_id])
+                return
+            
+            # Convert to records
+            headers = all_values[0]
+            records = []
+            for i, row in enumerate(all_values[1:], start=2):  # Start from row 2 (1-indexed)
+                if len(row) >= len(headers):
+                    record = dict(zip(headers, row))
+                    record['_row_number'] = i
+                    records.append(record)
             
             # Find existing record for this month
-            existing_row = None
-            for i, record in enumerate(records):
+            existing_record = None
+            for record in records:
                 if record.get('Periode') == period_key:
-                    existing_row = i + 2  # +2 because of header row and 0-based index
+                    existing_record = record
                     break
             
-            if existing_row and len(records) > 0:
+            if existing_record:
                 # Update existing record
-                record_index = existing_row - 2  # Convert back to 0-based index
-                if record_index < len(records):
-                    current_income = parse_amount(str(records[record_index].get('Total Pemasukan', ''))) or 0
-                    current_expense = parse_amount(str(records[record_index].get('Total Pengeluaran', ''))) or 0
-                    
-                    if transaction_type == 'income':
-                        new_income = current_income + amount
-                        new_expense = current_expense
-                    else:
-                        new_income = current_income
-                        new_expense = current_expense + amount
-                    
-                    new_balance = new_income - new_expense
-                    
-                    # Update the row
-                    summary_sheet.update(f'B{existing_row}:D{existing_row}', [[new_income, new_expense, new_balance]])
+                current_income = parse_amount(str(existing_record.get('Total Pemasukan', ''))) or 0
+                current_expense = parse_amount(str(existing_record.get('Total Pengeluaran', ''))) or 0
+                
+                if transaction_type == 'income':
+                    new_income = current_income + amount
+                    new_expense = current_expense
+                else:
+                    new_income = current_income
+                    new_expense = current_expense + amount
+                
+                new_balance = new_income - new_expense
+                
+                # Update the row
+                row_number = existing_record['_row_number']
+                summary_sheet.update(f'B{row_number}:D{row_number}', [[new_income, new_expense, new_balance]])
             else:
                 # Create new record
                 if transaction_type == 'income':
@@ -599,7 +748,6 @@ class GoogleSheetsService:
                     expense = amount
                 
                 balance = income - expense
-                
                 summary_sheet.append_row([period_key, income, expense, balance, user_id])
             
         except Exception as e:
