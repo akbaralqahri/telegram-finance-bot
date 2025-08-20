@@ -8,6 +8,7 @@ import logging
 import asyncio
 import signal
 import sys
+import os
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -20,14 +21,44 @@ from bot.handlers import (
     categories_command, handle_message, handle_callback
 )
 
-# Configure logging
+# Fix Windows console encoding for emoji support
+if sys.platform == "win32":
+    import codecs
+    sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
+    sys.stderr = codecs.getwriter("utf-8")(sys.stderr.detach())
+
+# Configure logging with proper encoding
+class SafeStreamHandler(logging.StreamHandler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            # Replace problematic characters for Windows console
+            if sys.platform == "win32":
+                msg = msg.replace('✅', '[OK]').replace('❌', '[ERROR]').replace('⚠️', '[WARN]')
+                msg = msg.replace('🚫', '[BLOCKED]').replace('🔧', '[SETUP]').replace('📊', '[DATA]')
+                msg = msg.replace('💰', '[MONEY]').replace('🤖', '[AI]').replace('📱', '[BOT]')
+            
+            stream = self.stream
+            stream.write(msg + self.terminator)
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
+# Setup logging
+log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# File handler (supports UTF-8)
+file_handler = logging.FileHandler('finance_bot.log', encoding='utf-8')
+file_handler.setFormatter(log_formatter)
+
+# Console handler (safe for Windows)
+console_handler = SafeStreamHandler(sys.stdout)
+console_handler.setFormatter(log_formatter)
+
+# Configure root logger
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
-    handlers=[
-        logging.FileHandler('finance_bot.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=[file_handler, console_handler]
 )
 
 # Set httpx and telegram.ext logging to WARNING to reduce noise
@@ -104,7 +135,7 @@ class FinanceBot:
             await self.application.start()
             
             self.is_running = True
-            logger.info("✅ Finance Bot started successfully!")
+            logger.info("[OK] Finance Bot started successfully!")
             logger.info("Bot is now running. Press Ctrl+C to stop.")
             
             # Start polling
@@ -132,7 +163,7 @@ class FinanceBot:
             await self.application.stop()
             await self.application.shutdown()
             
-            logger.info("✅ Finance Bot stopped successfully!")
+            logger.info("[OK] Finance Bot stopped successfully!")
 
 def signal_handler(signum, frame):
     """Handle shutdown signals"""
@@ -183,7 +214,6 @@ if __name__ == "__main__":
             sys.exit(1)
         
         # Create necessary directories
-        import os
         os.makedirs('data', exist_ok=True)
         os.makedirs('logs', exist_ok=True)
         
@@ -191,7 +221,7 @@ if __name__ == "__main__":
         asyncio.run(main())
         
     except KeyboardInterrupt:
-        print("\n👋 Finance Bot stopped by user")
+        print("\n[INFO] Finance Bot stopped by user")
     except Exception as e:
-        print(f"❌ Failed to start Finance Bot: {e}")
+        print(f"[ERROR] Failed to start Finance Bot: {e}")
         sys.exit(1)

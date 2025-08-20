@@ -203,7 +203,9 @@ class GoogleSheetsService:
             # Get all records
             records = transactions_sheet.get_all_records()
             
-            if not records:
+            # Check if there are any records (excluding header)
+            if not records or len(records) == 0:
+                logger.info(f"No transactions found for user {user_id}, returning balance 0")
                 return 0.0
             
             # Get the last balance value
@@ -212,6 +214,8 @@ class GoogleSheetsService:
             
             # Convert to float if it's a string
             if isinstance(balance, str):
+                if balance.strip() == '':
+                    return 0.0
                 balance = parse_amount(balance) or 0
             
             return float(balance)
@@ -224,7 +228,7 @@ class GoogleSheetsService:
         """Get monthly financial summary"""
         try:
             if user_id not in self.user_sheets:
-                return {'income': 0, 'expense': 0, 'balance': 0}
+                return {'income': 0, 'expense': 0, 'net': 0}
             
             spreadsheet = self.user_sheets[user_id]
             transactions_sheet = spreadsheet.worksheet('Transactions')
@@ -232,22 +236,35 @@ class GoogleSheetsService:
             # Get all records for the specified month
             records = transactions_sheet.get_all_records()
             
+            # Check if there are any records
+            if not records or len(records) == 0:
+                logger.info(f"No transactions found for user {user_id} in {month}/{year}")
+                return {'income': 0, 'expense': 0, 'net': 0}
+            
             total_income = 0
             total_expense = 0
             
             for record in records:
                 try:
                     # Parse date
-                    record_date = datetime.strptime(record['Tanggal'], '%Y-%m-%d')
+                    date_str = record.get('Tanggal', '')
+                    if not date_str:
+                        continue
+                        
+                    record_date = datetime.strptime(date_str, '%Y-%m-%d')
                     
                     if record_date.year == year and record_date.month == month:
-                        income = parse_amount(str(record.get('Pemasukan', ''))) or 0
-                        expense = parse_amount(str(record.get('Pengeluaran', ''))) or 0
+                        income_str = str(record.get('Pemasukan', ''))
+                        expense_str = str(record.get('Pengeluaran', ''))
                         
-                        total_income += income
-                        total_expense += expense
+                        income = parse_amount(income_str) if income_str and income_str.strip() else 0
+                        expense = parse_amount(expense_str) if expense_str and expense_str.strip() else 0
                         
-                except (ValueError, KeyError):
+                        total_income += income or 0
+                        total_expense += expense or 0
+                        
+                except (ValueError, KeyError) as e:
+                    logger.warning(f"Error parsing record for user {user_id}: {e}")
                     continue
             
             return {
@@ -264,11 +281,32 @@ class GoogleSheetsService:
         """Generate financial report"""
         try:
             if user_id not in self.user_sheets:
-                return {}
+                return {
+                    'total_income': 0,
+                    'total_expense': 0,
+                    'net_amount': 0,
+                    'current_balance': 0,
+                    'top_expenses': [],
+                    'transactions': [],
+                    'period': report_type
+                }
             
             spreadsheet = self.user_sheets[user_id]
             transactions_sheet = spreadsheet.worksheet('Transactions')
             records = transactions_sheet.get_all_records()
+            
+            # Check if there are any records
+            if not records or len(records) == 0:
+                logger.info(f"No transactions found for user {user_id} report")
+                return {
+                    'total_income': 0,
+                    'total_expense': 0,
+                    'net_amount': 0,
+                    'current_balance': 0,
+                    'top_expenses': [],
+                    'transactions': [],
+                    'period': report_type
+                }
             
             # Filter records based on report type
             filtered_records = self._filter_records_by_period(records, report_type)
@@ -281,19 +319,28 @@ class GoogleSheetsService:
             
             for record in filtered_records:
                 try:
-                    income = parse_amount(str(record.get('Pemasukan', ''))) or 0
-                    expense = parse_amount(str(record.get('Pengeluaran', ''))) or 0
+                    income_str = str(record.get('Pemasukan', ''))
+                    expense_str = str(record.get('Pengeluaran', ''))
+                    
+                    income = parse_amount(income_str) if income_str and income_str.strip() else 0
+                    expense = parse_amount(expense_str) if expense_str and expense_str.strip() else 0
                     category = record.get('Kategori', 'Lainnya')
                     
-                    total_income += income
-                    total_expense += expense
+                    total_income += income or 0
+                    total_expense += expense or 0
                     
                     # Track category expenses
-                    if expense > 0:
+                    if expense and expense > 0:
                         category_expenses[category] = category_expenses.get(category, 0) + expense
                     
                     # Add to transactions list
-                    amount = income if income > 0 else -expense
+                    if income and income > 0:
+                        amount = income
+                    elif expense and expense > 0:
+                        amount = -expense
+                    else:
+                        continue
+                        
                     transactions.append({
                         'date': record.get('Tanggal', ''),
                         'category': category,
@@ -301,7 +348,8 @@ class GoogleSheetsService:
                         'amount': amount
                     })
                     
-                except (ValueError, KeyError):
+                except (ValueError, KeyError) as e:
+                    logger.warning(f"Error processing record for user {user_id}: {e}")
                     continue
             
             # Sort category expenses
@@ -322,7 +370,15 @@ class GoogleSheetsService:
             
         except Exception as e:
             logger.error(f"Error generating report for user {user_id}: {e}")
-            return {}
+            return {
+                'total_income': 0,
+                'total_expense': 0,
+                'net_amount': 0,
+                'current_balance': 0,
+                'top_expenses': [],
+                'transactions': [],
+                'period': report_type
+            }
     
     async def search_transactions(self, user_id: int, query: str) -> List[Dict]:
         """Search transactions based on query"""
@@ -333,6 +389,9 @@ class GoogleSheetsService:
             spreadsheet = self.user_sheets[user_id]
             transactions_sheet = spreadsheet.worksheet('Transactions')
             records = transactions_sheet.get_all_records()
+            
+            if not records or len(records) == 0:
+                return []
             
             results = []
             query_lower = query.lower()
@@ -351,9 +410,9 @@ class GoogleSheetsService:
                         query in income or 
                         query in expense):
                         
-                        income_val = parse_amount(income) or 0
-                        expense_val = parse_amount(expense) or 0
-                        amount = income_val if income_val > 0 else -expense_val
+                        income_val = parse_amount(income) if income and income.strip() else 0
+                        expense_val = parse_amount(expense) if expense and expense.strip() else 0
+                        amount = income_val if income_val and income_val > 0 else -(expense_val or 0)
                         
                         results.append({
                             'date': record.get('Tanggal', ''),
@@ -362,7 +421,8 @@ class GoogleSheetsService:
                             'amount': amount
                         })
                         
-                except (ValueError, KeyError):
+                except (ValueError, KeyError) as e:
+                    logger.warning(f"Error processing search record for user {user_id}: {e}")
                     continue
             
             # Sort by date (newest first)
@@ -387,14 +447,20 @@ class GoogleSheetsService:
             transactions_sheet = spreadsheet.worksheet('Transactions')
             records = transactions_sheet.get_all_records()
             
+            if not records or len(records) == 0:
+                return []
+            
             target_date = date.strftime('%Y-%m-%d')
             daily_transactions = []
             
             for record in records:
                 if record.get('Tanggal') == target_date:
-                    income = parse_amount(str(record.get('Pemasukan', ''))) or 0
-                    expense = parse_amount(str(record.get('Pengeluaran', ''))) or 0
-                    amount = income if income > 0 else -expense
+                    income_str = str(record.get('Pemasukan', ''))
+                    expense_str = str(record.get('Pengeluaran', ''))
+                    
+                    income = parse_amount(income_str) if income_str and income_str.strip() else 0
+                    expense = parse_amount(expense_str) if expense_str and expense_str.strip() else 0
+                    amount = income if income and income > 0 else -(expense or 0)
                     
                     daily_transactions.append({
                         'date': record.get('Tanggal', ''),
@@ -427,10 +493,14 @@ class GoogleSheetsService:
                 return []
             
             spreadsheet = self.user_sheets[user_id]
-            categories_sheet = spreadsheet.worksheet('Categories')
-            records = categories_sheet.get_all_records()
             
-            return records
+            try:
+                categories_sheet = spreadsheet.worksheet('Categories')
+                records = categories_sheet.get_all_records()
+                return records
+            except gspread.WorksheetNotFound:
+                logger.warning(f"Categories sheet not found for user {user_id}")
+                return []
             
         except Exception as e:
             logger.error(f"Error getting categories for user {user_id}: {e}")
@@ -467,14 +537,27 @@ class GoogleSheetsService:
             
         except Exception as e:
             logger.error(f"Error getting financial summary for user {user_id}: {e}")
-            return {}
+            return {
+                'current_balance': 0,
+                'this_month': {'income': 0, 'expense': 0, 'net': 0},
+                'last_month': {'income': 0, 'expense': 0, 'net': 0},
+                'recent_transactions': [],
+                'top_categories': [],
+                'net_this_month': 0,
+                'net_last_month': 0
+            }
     
     async def _update_monthly_summary(self, user_id: int, amount: float, 
                                     transaction_type: str, date: datetime):
         """Update monthly summary sheet"""
         try:
             spreadsheet = self.user_sheets[user_id]
-            summary_sheet = spreadsheet.worksheet('Monthly_Summary')
+            
+            try:
+                summary_sheet = spreadsheet.worksheet('Monthly_Summary')
+            except gspread.WorksheetNotFound:
+                logger.warning(f"Monthly_Summary sheet not found for user {user_id}")
+                return
             
             period_key = f"{date.year}-{date.month:02d}"
             
@@ -488,22 +571,24 @@ class GoogleSheetsService:
                     existing_row = i + 2  # +2 because of header row and 0-based index
                     break
             
-            if existing_row:
+            if existing_row and len(records) > 0:
                 # Update existing record
-                current_income = parse_amount(str(records[existing_row-2].get('Total Pemasukan', ''))) or 0
-                current_expense = parse_amount(str(records[existing_row-2].get('Total Pengeluaran', ''))) or 0
-                
-                if transaction_type == 'income':
-                    new_income = current_income + amount
-                    new_expense = current_expense
-                else:
-                    new_income = current_income
-                    new_expense = current_expense + amount
-                
-                new_balance = new_income - new_expense
-                
-                # Update the row
-                summary_sheet.update(f'B{existing_row}:D{existing_row}', [[new_income, new_expense, new_balance]])
+                record_index = existing_row - 2  # Convert back to 0-based index
+                if record_index < len(records):
+                    current_income = parse_amount(str(records[record_index].get('Total Pemasukan', ''))) or 0
+                    current_expense = parse_amount(str(records[record_index].get('Total Pengeluaran', ''))) or 0
+                    
+                    if transaction_type == 'income':
+                        new_income = current_income + amount
+                        new_expense = current_expense
+                    else:
+                        new_income = current_income
+                        new_expense = current_expense + amount
+                    
+                    new_balance = new_income - new_expense
+                    
+                    # Update the row
+                    summary_sheet.update(f'B{existing_row}:D{existing_row}', [[new_income, new_expense, new_balance]])
             else:
                 # Create new record
                 if transaction_type == 'income':
@@ -527,7 +612,11 @@ class GoogleSheetsService:
         
         for record in records:
             try:
-                record_date = datetime.strptime(record['Tanggal'], '%Y-%m-%d')
+                date_str = record.get('Tanggal', '')
+                if not date_str:
+                    continue
+                    
+                record_date = datetime.strptime(date_str, '%Y-%m-%d')
                 
                 if period == 'daily':
                     if record_date.date() == now.date():
@@ -544,7 +633,8 @@ class GoogleSheetsService:
                     if record_date.year == now.year:
                         filtered.append(record)
                         
-            except ValueError:
+            except ValueError as e:
+                logger.warning(f"Error parsing date in record: {e}")
                 continue
         
         return filtered
