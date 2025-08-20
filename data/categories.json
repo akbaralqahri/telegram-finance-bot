@@ -1,0 +1,108 @@
+{
+  "income": [
+    {
+      "name": "Gaji",
+      "keywords": ["gaji", "salary", "upah", "penghasilan"],
+      "icon": "💰",
+      "description": "Gaji bulanan atau mingguan"
+    },
+    {
+      "name": "Bonus",
+      "keywords": ["bonus", "tunjangan", "insentif", "reward"],
+      "icon": "🎁",
+      "description": "Bonus atau tunjangan tambahan"
+    },
+    {
+      "name": "Investasi",
+      "keywords": ["dividen", "bunga", "profit", "keuntungan", "return"],
+      "icon": "📈",
+      "description": "Hasil dari investasi"
+    },
+    {
+      "name": "Freelance",
+      "keywords": ["freelance", "project", "client", "kontrak", "jasa"],
+      "icon": "💻",
+      "description": "Pendapatan dari pekerjaan freelance"
+    },
+    {
+      "name": "Bisnis",
+      "keywords": ["bisnis", "usaha", "dagang", "jualan", "penjualan"],
+      "icon": "🏪",
+      "description": "Pendapatan dari bisnis pribadi"
+    },
+    {
+      "name": "Lainnya",
+      "keywords": ["lain", "other", "misc", "lainnya"],
+      "icon": "💵",
+      "description": "Pemasukan lainnya"
+    }
+  ],
+  "expense": [
+    {
+      "name": "Makanan",
+      "keywords": ["makan", "food", "groceries", "restaurant", "cafe", "snack", "minuman", "drink"],
+      "icon": "🍽️",
+      "description": "Makanan dan minuman"
+    },
+    {
+      "name": "Transport",
+      "keywords": ["bensin", "fuel", "grab", "gojek", "taxi", "bus", "ojek", "parkir", "toll"],
+      "icon": "🚗",
+      "description": "Transportasi dan bahan bakar"
+    },
+    {
+      "name": "Belanja",
+      "keywords": ["beli", "shopping", "market", "mall", "tokopedia", "shopee", "lazada", "online"],
+      "icon": "🛒",
+      "description": "Belanja kebutuhan sehari-hari"
+    },
+    {
+      "name": "Tagihan",
+      "keywords": ["listrik", "internet", "air", "telepon", "wifi", "pln", "pdam", "cicilan", "bayar"],
+      "icon": "🧾",
+      "description": "Tagihan bulanan"
+    },
+    {
+      "name": "Kesehatan",
+      "keywords": ["dokter", "obat", "hospital", "medical", "rumah sakit", "apotek", "vitamin"],
+      "icon": "🏥",
+      "description": "Kesehatan dan pengobatan"
+    },
+    {
+      "name": "Hiburan",
+      "keywords": ["movie", "game", "concert", "vacation", "liburan", "netflix", "spotify", "bioskop"],
+      "icon": "🎬",
+      "description": "Hiburan dan rekreasi"
+    },
+    {
+      "name": "Pendidikan",
+      "keywords": ["kursus", "buku", "course", "training", "sekolah", "kuliah", "les"],
+      "icon": "📚",
+      "description": "Pendidikan dan pembelajaran"
+    },
+    {
+      "name": "Pakaian",
+      "keywords": ["baju", "celana", "sepatu", "tas", "clothes", "fashion", "aksesoris"],
+      "icon": "👕",
+      "description": "Pakaian dan aksesoris"
+    },
+    {
+      "name": "Rumah Tangga",
+      "keywords": ["sabun", "deterjen", "pembersih", "alat", "perabot", "furniture", "maintenance"],
+      "icon": "🏠",
+      "description": "Keperluan rumah tangga"
+    },
+    {
+      "name": "Teknologi",
+      "keywords": ["gadget", "hp", "laptop", "komputer", "software", "aplikasi", "upgrade"],
+      "icon": "📱",
+      "description": "Teknologi dan elektronik"
+    },
+    {
+      "name": "Lainnya",
+      "keywords": ["lain", "other", "misc", "lainnya", "emergency"],
+      "icon": "💸",
+      "description": "Pengeluaran lainnya"
+    }
+  ]
+}

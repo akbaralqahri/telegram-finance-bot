@@ -1,0 +1,24 @@
+# Telegram Bot Framework
+python-telegram-bot==20.7
+
+# Google APIs
+google-auth==2.25.2
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.111.0
+gspread==5.12.0
+
+# AI Integration
+google-generativeai==0.3.2
+
+# Environment and Configuration
+python-dotenv==1.0.0
+
+# Date and Time Handling
+pytz==2023.3.post1
+
+# Data Processing
+pandas==2.1.4
+
+# Utilities
+requests==2.31.0
