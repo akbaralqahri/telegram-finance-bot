@@ -1,5 +1,5 @@
 """
-Bot command handlers for Telegram Finance Bot with Date Input Feature
+Bot command handlers for Telegram Finance Bot with Date Input Feature - FIXED VERSION
 """
 
 import logging
@@ -251,7 +251,7 @@ async def process_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_FOR_CONFIRMATION
 
 async def show_transaction_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show transaction confirmation before saving"""
+    """Show transaction confirmation before saving - FIXED VERSION"""
     user_data = context.user_data
     transaction_type = user_data.get('transaction_type', 'expense')
     amount = user_data.get('amount', 0)
@@ -265,18 +265,30 @@ async def show_transaction_confirmation(update: Update, context: ContextTypes.DE
     category = await sheets_service.detect_category(description, transaction_type)
     user_data['category'] = category
     
-    # Format date for display
-    if transaction_date.date() == datetime.now().date():
+    # FIXED: Format date for display with proper logic
+    today = datetime.now().date()
+    transaction_date_only = transaction_date.date()
+    
+    if transaction_date_only == today:
         date_display = "Hari ini"
-    elif transaction_date.date() == (datetime.now() - timedelta(days=1)).date():
+    elif transaction_date_only == (today - timedelta(days=1)):
         date_display = "Kemarin"
-    elif transaction_date.date() == (datetime.now() + timedelta(days=1)).date():
+    elif transaction_date_only == (today + timedelta(days=1)):
         date_display = "Besok"
+    elif transaction_date_only == (today + timedelta(days=2)):
+        date_display = "Lusa"
     else:
-        date_display = transaction_date.strftime("%d %B %Y")
+        # FIXED: Use Indonesian month names for better display
+        month_names_id = {
+            1: 'Januari', 2: 'Februari', 3: 'Maret', 4: 'April',
+            5: 'Mei', 6: 'Juni', 7: 'Juli', 8: 'Agustus',
+            9: 'September', 10: 'Oktober', 11: 'November', 12: 'Desember'
+        }
+        month_name = month_names_id.get(transaction_date.month, transaction_date.strftime('%B'))
+        date_display = f"{transaction_date.day} {month_name} {transaction_date.year}"
     
     confirmation_text = f"""
-📝 *Konfirmasi Transaksi*
+📋 *Konfirmasi Transaksi*
 
 {type_icon} *Jenis:* {type_text}
 💵 *Jumlah:* {format_currency(amount)}
@@ -322,7 +334,7 @@ async def process_confirmation(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 async def save_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Save transaction to spreadsheet"""
+    """Save transaction to spreadsheet - FIXED VERSION"""
     user_data = context.user_data
     user_id = update.effective_user.id
     
@@ -340,19 +352,36 @@ async def save_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             type_icon = "💰" if user_data['transaction_type'] == 'income' else "💸"
             transaction_date = user_data.get('transaction_date', datetime.now())
             
-            # Format date for display
-            if transaction_date.date() == datetime.now().date():
-                date_display = "hari ini"
-            elif transaction_date.date() == (datetime.now() - timedelta(days=1)).date():
-                date_display = "kemarin"
+            # FIXED: Format date for display with proper logic
+            today = datetime.now().date()
+            transaction_date_only = transaction_date.date()
+            
+            if transaction_date_only == today:
+                date_display = ""  # Don't show "hari ini" in success message
+            elif transaction_date_only == (today - timedelta(days=1)):
+                date_display = " (kemarin)"
+            elif transaction_date_only == (today + timedelta(days=1)):
+                date_display = " (besok)"
+            elif transaction_date_only == (today + timedelta(days=2)):
+                date_display = " (lusa)"
             else:
-                date_display = transaction_date.strftime("%d %B %Y")
+                # FIXED: Use Indonesian month names
+                month_names_id = {
+                    1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr',
+                    5: 'Mei', 6: 'Jun', 7: 'Jul', 8: 'Agu',
+                    9: 'Sep', 10: 'Okt', 11: 'Nov', 12: 'Des'
+                }
+                month_name = month_names_id.get(transaction_date.month, transaction_date.strftime('%b'))
+                date_display = f" ({transaction_date.day} {month_name} {transaction_date.year})"
+            
+            # Show the actual date that was saved to database in the success message
+            actual_date_display = transaction_date.strftime('%d/%m/%Y')
             
             await update.callback_query.edit_message_text(
                 f"✅ *Transaksi berhasil dicatat!*\n\n"
                 f"{type_icon} *{user_data['transaction_type'].title()}:* {format_currency(user_data['amount'])}\n"
                 f"📝 *Deskripsi:* {user_data['description']}\n"
-                f"🗓️ *Tanggal:* {date_display}\n"
+                f"🗓️ *Tanggal:* {actual_date_display}{date_display}\n"
                 f"🏷️ *Kategori:* {user_data['category']}\n\n"
                 f"Ketik /balance untuk cek saldo atau /report untuk laporan.",
                 parse_mode=ParseMode.MARKDOWN
@@ -619,7 +648,7 @@ async def categories_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle regular text messages"""
+    """Handle regular text messages - FIXED VERSION"""
     user_id = update.effective_user.id
     message_text = update.message.text
     
@@ -650,19 +679,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if success:
                 type_icon = "💰" if transaction_data['type'] == 'income' else "💸"
                 
-                # Format date for display
-                if transaction_date.date() == datetime.now().date():
+                # FIXED: Format date for display
+                today = datetime.now().date()
+                transaction_date_only = transaction_date.date()
+                
+                if transaction_date_only == today:
                     date_display = ""
-                elif transaction_date.date() == (datetime.now() - timedelta(days=1)).date():
+                elif transaction_date_only == (today - timedelta(days=1)):
                     date_display = " (kemarin)"
+                elif transaction_date_only == (today + timedelta(days=1)):
+                    date_display = " (besok)"
+                elif transaction_date_only == (today + timedelta(days=2)):
+                    date_display = " (lusa)"
                 else:
-                    date_display = f" ({transaction_date.strftime('%d %b %Y')})"
+                    # FIXED: Use Indonesian month names for consistency
+                    month_names_id = {
+                        1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr',
+                        5: 'Mei', 6: 'Jun', 7: 'Jul', 8: 'Agu',
+                        9: 'Sep', 10: 'Okt', 11: 'Nov', 12: 'Des'
+                    }
+                    month_name = month_names_id.get(transaction_date.month, transaction_date.strftime('%b'))
+                    date_display = f" ({transaction_date.day} {month_name} {transaction_date.year})"
+                
+                # Show the actual date that was saved to database in the success message
+                actual_date_display = transaction_date.strftime('%d/%m/%Y')
                 
                 await update.message.reply_text(
                     f"✅ Transaksi berhasil dicatat!\n\n"
                     f"{type_icon} *{transaction_data['type'].title()}:* {format_currency(transaction_data['amount'])}\n"
                     f"📝 *Deskripsi:* {transaction_data['description']}\n"
-                    f"🏷️ *Kategori:* {category}{date_display}",
+                    f"🗓️ *Tanggal:* {actual_date_display}{date_display}\n"
+                    f"🏷️ *Kategori:* {category}",
                     parse_mode=ParseMode.MARKDOWN
                 )
             else:
@@ -686,6 +733,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• Beli makan 25000\n"
                 "• Gaji bulan ini 5 juta\n"
                 "• Bayar listrik 150rb kemarin\n"
+                "• Ngopi 15rb tanggal 22/08/2025\n"
                 "• Atau gunakan /help untuk bantuan"
             )
 
