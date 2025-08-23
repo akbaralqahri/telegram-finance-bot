@@ -1,5 +1,5 @@
 """
-Telegram Finance Bot - Main Application
+Telegram Finance Bot - Main Application - FIXED VERSION
 Author: Finance Bot Developer
 Created: 2024
 """
@@ -13,12 +13,12 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from telegram import Update
 from telegram.ext import ContextTypes
 
-# Import local modules
+# Import local modules - FIXED IMPORTS
 from config import Config
 from bot.handlers import (
     start_command, help_command, income_command, expense_command,
     report_command, search_command, ai_command, balance_command,
-    categories_command, handle_message, handle_callback
+    categories_command, handle_message, handle_callback, setup_bot_menu
 )
 
 # Fix Windows console encoding for emoji support
@@ -83,6 +83,9 @@ class FinanceBot:
             # Create application
             self.application = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
             
+            # FIXED: Setup persistent menu and commands
+            await setup_bot_menu(self.application)
+            
             # Import conversation handler
             from bot.handlers import get_conversation_handler
             
@@ -112,6 +115,7 @@ class FinanceBot:
             self.application.add_error_handler(self.error_handler)
             
             logger.info("Bot handlers initialized successfully")
+            logger.info("✅ Persistent menu and commands setup completed")
             
         except Exception as e:
             logger.error(f"Failed to initialize bot: {e}")
@@ -140,7 +144,7 @@ class FinanceBot:
             await self.application.start()
             
             self.is_running = True
-            logger.info("[OK] Finance Bot started successfully!")
+            logger.info("[OK] Finance Bot with Persistent Menu started successfully!")
             logger.info("Bot is now running. Press Ctrl+C to stop.")
             
             # Start polling

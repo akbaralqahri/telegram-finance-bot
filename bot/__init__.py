@@ -1,11 +1,11 @@
 """
-Bot package for Telegram Finance Bot
-Contains handlers, keyboards, and bot-related functionality
+Bot package initialization - FIXED VERSION
 """
 
+# FIXED: Import only the functions that actually exist in handlers.py
 from .handlers import (
     start_command,
-    help_command, 
+    help_command,
     income_command,
     expense_command,
     report_command,
@@ -15,27 +15,27 @@ from .handlers import (
     categories_command,
     handle_message,
     handle_callback,
-    get_conversation_handler
+    setup_bot_menu,
+    get_conversation_handler,
+    # Removed any non-existent imports
 )
 
 from .keyboards import (
     get_main_keyboard,
-    get_transaction_type_keyboard,
-    get_category_keyboard,
-    get_report_keyboard,
+    get_persistent_keyboard,
+    get_quick_action_keyboard,
+    get_minimal_keyboard,
+    get_date_keyboard,
     get_confirmation_keyboard,
-    get_amount_quick_keyboard,
-    get_period_keyboard,
-    get_search_type_keyboard,
-    get_ai_suggestions_keyboard,
-    get_date_keyboard
+    get_report_keyboard,
+    get_bot_commands,
 )
 
 __all__ = [
-    # Handlers
+    # Handler functions
     'start_command',
-    'help_command',
-    'income_command', 
+    'help_command', 
+    'income_command',
     'expense_command',
     'report_command',
     'search_command',
@@ -44,17 +44,16 @@ __all__ = [
     'categories_command',
     'handle_message',
     'handle_callback',
+    'setup_bot_menu',
     'get_conversation_handler',
     
-    # Keyboards
+    # Keyboard functions
     'get_main_keyboard',
-    'get_transaction_type_keyboard',
-    'get_category_keyboard',
+    'get_persistent_keyboard',
+    'get_quick_action_keyboard',
+    'get_minimal_keyboard',
+    'get_date_keyboard',
+    'get_confirmation_keyboard', 
     'get_report_keyboard',
-    'get_confirmation_keyboard',
-    'get_amount_quick_keyboard',
-    'get_period_keyboard',
-    'get_search_type_keyboard',
-    'get_ai_suggestions_keyboard',
-    'get_date_keyboard'
+    'get_bot_commands',
 ]

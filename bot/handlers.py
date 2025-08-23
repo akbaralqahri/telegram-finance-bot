@@ -1,10 +1,10 @@
 """
-Bot command handlers for Telegram Finance Bot with Date Input Feature - FIXED VERSION
+Bot command handlers with PERSISTENT MENU support - COMPLETE VERSION
 """
 
 import logging
 from datetime import datetime, timedelta
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 
@@ -17,7 +17,8 @@ from utils.helpers import (
 )
 from bot.keyboards import (
     get_main_keyboard, get_category_keyboard, get_report_keyboard,
-    get_confirmation_keyboard, get_date_keyboard
+    get_confirmation_keyboard, get_date_keyboard, get_persistent_keyboard,
+    get_quick_action_keyboard, get_minimal_keyboard, get_bot_commands
 )
 
 logger = logging.getLogger(__name__)
@@ -33,8 +34,22 @@ WAITING_FOR_CONFIRMATION = 5
 sheets_service = GoogleSheetsService()
 ai_service = GeminiAIService()
 
+async def setup_bot_menu(application):
+    """Setup persistent bot menu and commands"""
+    try:
+        # Set bot commands for menu
+        commands = get_bot_commands()
+        await application.bot.set_my_commands(commands)
+        
+        logger.info("✅ Bot commands setup completed")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Error setting up bot menu: {e}")
+        return False
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command"""
+    """Handle /start command with persistent menu"""
     user = update.effective_user
     
     try:
@@ -69,30 +84,27 @@ Halo {user.first_name}! 👋
 📉 Pengeluaran Bulan Ini: {expense_text}
 
 💡 *Cara Cepat Catat Transaksi:*
-• Ketik: "Beli makan 25000"
-• Ketik: "Gaji bulan ini 5 juta"
+• Ketik: "Beli makan 25rb"
+• Ketik: "Gaji bulan ini 5jt"  
 • Ketik: "Bayar listrik 150rb kemarin"
-• Ketik: "Beli groceries 200000 tanggal 15"
+• Ketik: "Ngopi 15rb tanggal 22/08/2025"
 
-🗓️ *Format Tanggal Didukung:*
-• hari ini, kemarin, besok, lusa
-• Senin, Selasa, Rabu, dst
-• 25/12/2024, 25-12-2024
-• tanggal 15, tgl 20
-
-Atau gunakan menu di bawah ini:
+🚀 *Menu persisten sudah aktif di bawah!*
+Gunakan tombol di bawah chat atau ketik transaksi langsung.
 """
         
+        # Send message with persistent keyboard
         await update.message.reply_text(
             welcome_message,
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=get_main_keyboard()
+            reply_markup=get_persistent_keyboard()  # PERSISTENT MENU
         )
         
     except Exception as e:
         logger.error(f"Error in start_command: {e}")
         await update.message.reply_text(
-            "❌ Terjadi kesalahan saat memulai. Silakan coba lagi."
+            "❌ Terjadi kesalahan saat memulai. Silakan coba lagi.",
+            reply_markup=get_persistent_keyboard()
         )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -100,42 +112,119 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """
 📚 *Panduan Finance Bot*
 
+🚀 *MENU PERSISTEN AKTIF!*
+Menu di bawah chat selalu tersedia - tidak perlu scroll atau ketik /start lagi!
+
 🔹 *Cara Input Transaksi Cepat:*
-• "Beli groceries 150000"
-• "Gaji november 8500000" 
-• "Makan di restaurant 75000 kemarin"
-• "Bayar internet 350000 tanggal 1"
+• "Beli groceries 150rb"
+• "Gaji november 8.5jt"
+• "Makan di restaurant 75rb kemarin"
+• "Ngopi 15rb tanggal 22/08/2025"
 
 🔹 *Format Nominal yang Diterima:*
 • 150000, 150.000, 150,000
 • 1.5jt, 1.5 juta, 150k, 150rb
 
 🔹 *Format Tanggal yang Diterima:*
-• *Natural Language:* hari ini, kemarin, besok, lusa
-• *Hari:* Senin, Selasa, Rabu, dst (minggu ini)
+• *Natural:* hari ini, kemarin, besok, lusa
+• *Hari:* Senin, Selasa, Rabu, dst
 • *Tanggal:* 25/12/2024, 25-12-2024, 25 Des
 • *Shortcut:* tgl 15, tanggal 20
 
-🔹 *Perintah Tersedia:*
-• `/income` - Tambah pemasukan
-• `/expense` - Tambah pengeluaran  
-• `/report` - Lihat laporan
-• `/search` - Cari transaksi
-• `/balance` - Cek saldo
-• `/ai [pesan]` - Chat dengan AI
-• `/categories` - Kelola kategori
+🔹 *Tombol Menu Persisten:*
+• 💰 - Tambah Pemasukan
+• 💸 - Tambah Pengeluaran  
+• 📊 - Lihat Laporan
+• 💵 - Cek Saldo
+• 🔍 - Cari Transaksi
+• 🤖 - AI Assistant
 
-🔹 *Contoh Chat AI:*
-• `/ai analisis pengeluaran bulan ini`
-• `/ai tips hemat untuk makanan`
-• `/ai prediksi tabungan bulan depan`
-
-❓ Butuh bantuan? Ketik /start untuk menu utama
+💡 Menu selalu tersedia di bawah chat!
 """
     
     await update.message.reply_text(
         help_text,
-        parse_mode=ParseMode.MARKDOWN
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=get_persistent_keyboard()  # Keep persistent menu
+    )
+
+async def handle_persistent_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle input from persistent menu buttons"""
+    message_text = update.message.text.strip()
+    user_id = update.effective_user.id
+    
+    try:
+        # Handle persistent menu button presses
+        if message_text == "💰 Pemasukan" or message_text == "💰 +":
+            await income_command(update, context)
+        elif message_text == "💸 Pengeluaran" or message_text == "💸 -":
+            await expense_command(update, context)
+        elif message_text == "📊 Laporan" or message_text == "📊":
+            await report_command(update, context)
+        elif message_text == "💵 Saldo" or message_text == "💵":
+            await balance_command(update, context)
+        elif message_text == "🔍 Cari" or message_text == "🔍":
+            await update.message.reply_text(
+                "🔍 *Pencarian Transaksi*\n\n"
+                "Contoh pencarian:\n"
+                "• `/search makanan` - Cari kategori makanan\n"
+                "• `/search 100000` - Cari nominal 100rb\n"
+                "• `/search 2024-12-25` - Cari tanggal spesifik\n"
+                "• `/search groceries` - Cari deskripsi groceries",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_persistent_keyboard()
+            )
+        elif message_text == "🤖 AI" or message_text == "🤖":
+            await update.message.reply_text(
+                "🤖 *AI Finance Assistant*\n\n"
+                "Contoh pertanyaan:\n"
+                "• `/ai analisis pengeluaran bulan ini`\n"
+                "• `/ai tips hemat untuk makanan`\n"
+                "• `/ai prediksi tabungan bulan depan`\n"
+                "• `/ai kategori apa yang paling boros?`",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_persistent_keyboard()
+            )
+        elif message_text == "📚 Help" or message_text == "❓":
+            await help_command(update, context)
+        elif message_text == "💰":
+            await quick_income(update, context)
+        elif message_text == "💸":
+            await quick_expense(update, context)
+        else:
+            # Not a menu button, try to parse as transaction
+            return False  # Let other handlers process
+            
+        return True  # Handled by persistent menu
+        
+    except Exception as e:
+        logger.error(f"Error handling persistent menu: {e}")
+        await update.message.reply_text(
+            "❌ Terjadi kesalahan. Silakan coba lagi.",
+            reply_markup=get_persistent_keyboard()
+        )
+        return True
+
+async def quick_income(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Quick income entry"""
+    await update.message.reply_text(
+        "💰 *Tambah Pemasukan Cepat*\n\n"
+        "Ketik dalam format: *jumlah deskripsi*\n"
+        "Contoh: `5000000 Gaji bulanan`\n"
+        "Atau: `2jt Bonus project`",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=get_persistent_keyboard()
+    )
+
+async def quick_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Quick expense entry"""
+    await update.message.reply_text(
+        "💸 *Tambah Pengeluaran Cepat*\n\n"
+        "Ketik dalam format: *jumlah deskripsi*\n"
+        "Contoh: `25000 Beli makan`\n"
+        "Atau: `150rb Bayar listrik`",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=get_persistent_keyboard()
     )
 
 async def income_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -146,7 +235,8 @@ async def income_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💰 *Tambah Pemasukan*\n\n"
         "💵 Masukkan jumlah pemasukan:\n"
         "Contoh: 5000000, 5jt, 5 juta",
-        parse_mode=ParseMode.MARKDOWN
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=get_persistent_keyboard()  # Keep persistent menu
     )
     context.user_data['transaction_type'] = 'income'
     return WAITING_FOR_AMOUNT
@@ -159,7 +249,8 @@ async def expense_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💸 *Tambah Pengeluaran*\n\n"
         "💵 Masukkan jumlah pengeluaran:\n"
         "Contoh: 150000, 150rb, 150 ribu",
-        parse_mode=ParseMode.MARKDOWN
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=get_persistent_keyboard()  # Keep persistent menu
     )
     context.user_data['transaction_type'] = 'expense'
     return WAITING_FOR_AMOUNT
@@ -171,7 +262,8 @@ async def process_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not amount or amount <= 0:
         await update.message.reply_text(
             "❌ Format nominal tidak valid. Silakan masukkan angka yang benar.\n"
-            "Contoh: 150000, 150rb, 1.5jt"
+            "Contoh: 150000, 150rb, 1.5jt",
+            reply_markup=get_persistent_keyboard()
         )
         return WAITING_FOR_AMOUNT
     
@@ -183,7 +275,8 @@ async def process_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{type_icon} Jumlah: {format_currency(amount)}\n\n"
         "📝 Masukkan deskripsi transaksi:\n"
         "Contoh: Beli groceries, Gaji bulanan, Bayar listrik",
-        parse_mode=ParseMode.MARKDOWN
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=get_persistent_keyboard()  # Keep persistent menu
     )
     
     return WAITING_FOR_DESCRIPTION
@@ -194,7 +287,8 @@ async def process_description(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     if len(description) < 3:
         await update.message.reply_text(
-            "❌ Deskripsi terlalu pendek. Minimal 3 karakter."
+            "❌ Deskripsi terlalu pendek. Minimal 3 karakter.",
+            reply_markup=get_persistent_keyboard()
         )
         return WAITING_FOR_DESCRIPTION
     
@@ -205,7 +299,7 @@ async def process_description(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(
         f"{type_icon} Deskripsi: {description}\n\n"
         "🗓️ Pilih tanggal transaksi atau ketik tanggal custom:",
-        reply_markup=get_date_keyboard()
+        reply_markup=get_date_keyboard()  # Use inline keyboard for dates
     )
     
     return WAITING_FOR_DATE
@@ -219,7 +313,10 @@ async def process_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         date_input = update.callback_query.data.replace("date_", "")
     
     if not date_input:
-        await update.message.reply_text("❌ Input tanggal tidak valid.")
+        await update.message.reply_text(
+            "❌ Input tanggal tidak valid.",
+            reply_markup=get_persistent_keyboard()
+        )
         return WAITING_FOR_DATE
     
     # Parse the date
@@ -232,7 +329,8 @@ async def process_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• hari ini, kemarin, besok\n"
             "• Senin, Selasa, dst\n"
             "• 25/12/2024, 25-12-2024\n"
-            "• tgl 15, tanggal 20"
+            "• tgl 15, tanggal 20",
+            reply_markup=get_persistent_keyboard()
         )
         return WAITING_FOR_DATE
     
@@ -240,7 +338,8 @@ async def process_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     max_future_date = datetime.now() + timedelta(days=365)
     if transaction_date > max_future_date:
         await update.message.reply_text(
-            "❌ Tanggal terlalu jauh di masa depan (maksimal 1 tahun ke depan)."
+            "❌ Tanggal terlalu jauh di masa depan (maksimal 1 tahun ke depan).",
+            reply_markup=get_persistent_keyboard()
         )
         return WAITING_FOR_DATE
     
@@ -251,7 +350,7 @@ async def process_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_FOR_CONFIRMATION
 
 async def show_transaction_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show transaction confirmation before saving - FIXED VERSION"""
+    """Show transaction confirmation before saving"""
     user_data = context.user_data
     transaction_type = user_data.get('transaction_type', 'expense')
     amount = user_data.get('amount', 0)
@@ -265,7 +364,7 @@ async def show_transaction_confirmation(update: Update, context: ContextTypes.DE
     category = await sheets_service.detect_category(description, transaction_type)
     user_data['category'] = category
     
-    # FIXED: Format date for display with proper logic
+    # Format date for display
     today = datetime.now().date()
     transaction_date_only = transaction_date.date()
     
@@ -278,7 +377,7 @@ async def show_transaction_confirmation(update: Update, context: ContextTypes.DE
     elif transaction_date_only == (today + timedelta(days=2)):
         date_display = "Lusa"
     else:
-        # FIXED: Use Indonesian month names for better display
+        # Use Indonesian month names for better display
         month_names_id = {
             1: 'Januari', 2: 'Februari', 3: 'Maret', 4: 'April',
             5: 'Mei', 6: 'Juni', 7: 'Juli', 8: 'Agustus',
@@ -326,7 +425,12 @@ async def process_confirmation(update: Update, context: ContextTypes.DEFAULT_TYP
         # Cancel transaction
         await query.edit_message_text(
             "❌ Transaksi dibatalkan.\n\n"
-            "Ketik /start untuk menu utama atau /income atau /expense untuk mencoba lagi."
+            "Gunakan menu di bawah untuk mencoba lagi."
+        )
+        # Send new message with persistent keyboard
+        await query.message.reply_text(
+            "💡 Menu persisten tetap tersedia di bawah:",
+            reply_markup=get_persistent_keyboard()
         )
         context.user_data.clear()
         return ConversationHandler.END
@@ -334,7 +438,7 @@ async def process_confirmation(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 async def save_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Save transaction to spreadsheet - FIXED VERSION"""
+    """Save transaction to spreadsheet"""
     user_data = context.user_data
     user_id = update.effective_user.id
     
@@ -352,12 +456,12 @@ async def save_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             type_icon = "💰" if user_data['transaction_type'] == 'income' else "💸"
             transaction_date = user_data.get('transaction_date', datetime.now())
             
-            # FIXED: Format date for display with proper logic
+            # Format date for display
             today = datetime.now().date()
             transaction_date_only = transaction_date.date()
             
             if transaction_date_only == today:
-                date_display = ""  # Don't show "hari ini" in success message
+                date_display = ""
             elif transaction_date_only == (today - timedelta(days=1)):
                 date_display = " (kemarin)"
             elif transaction_date_only == (today + timedelta(days=1)):
@@ -365,7 +469,6 @@ async def save_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif transaction_date_only == (today + timedelta(days=2)):
                 date_display = " (lusa)"
             else:
-                # FIXED: Use Indonesian month names
                 month_names_id = {
                     1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr',
                     5: 'Mei', 6: 'Jun', 7: 'Jul', 8: 'Agu',
@@ -374,35 +477,47 @@ async def save_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 month_name = month_names_id.get(transaction_date.month, transaction_date.strftime('%b'))
                 date_display = f" ({transaction_date.day} {month_name} {transaction_date.year})"
             
-            # Show the actual date that was saved to database in the success message
             actual_date_display = transaction_date.strftime('%d/%m/%Y')
             
-            await update.callback_query.edit_message_text(
-                f"✅ *Transaksi berhasil dicatat!*\n\n"
-                f"{type_icon} *{user_data['transaction_type'].title()}:* {format_currency(user_data['amount'])}\n"
-                f"📝 *Deskripsi:* {user_data['description']}\n"
-                f"🗓️ *Tanggal:* {actual_date_display}{date_display}\n"
-                f"🏷️ *Kategori:* {user_data['category']}\n\n"
-                f"Ketik /balance untuk cek saldo atau /report untuk laporan.",
-                parse_mode=ParseMode.MARKDOWN
+            success_message = f"""
+✅ *Transaksi berhasil dicatat!*
+
+{type_icon} *{user_data['transaction_type'].title()}:* {format_currency(user_data['amount'])}
+📝 *Deskripsi:* {user_data['description']}
+🗓️ *Tanggal:* {actual_date_display}{date_display}
+🏷️ *Kategori:* {user_data['category']}
+
+💡 Gunakan menu di bawah untuk transaksi berikutnya.
+"""
+            
+            await update.callback_query.edit_message_text(success_message, parse_mode=ParseMode.MARKDOWN)
+            
+            # Send new message with persistent keyboard to maintain menu
+            await update.callback_query.message.reply_text(
+                "🚀 Menu persisten siap digunakan:",
+                reply_markup=get_persistent_keyboard()
             )
         else:
-            await update.callback_query.edit_message_text("❌ Gagal menyimpan transaksi. Silakan coba lagi.")
+            await update.callback_query.edit_message_text(
+                "❌ Gagal menyimpan transaksi. Silakan coba lagi.",
+                reply_markup=get_persistent_keyboard()
+            )
             
         # Clear user data
         context.user_data.clear()
         
     except Exception as e:
         logger.error(f"Error saving transaction: {e}")
-        await update.callback_query.edit_message_text("❌ Terjadi kesalahan saat menyimpan.")
+        await update.callback_query.edit_message_text(
+            "❌ Terjadi kesalahan saat menyimpan.",
+            reply_markup=get_persistent_keyboard()
+        )
 
-# Keep all the other handlers from before
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /report command - show financial reports"""
     user_id = update.effective_user.id
     message = update.message if update.message else update.callback_query.message
     
-    # Default to monthly report
     report_type = 'monthly'
     if context.args:
         arg = context.args[0].lower()
@@ -459,13 +574,14 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(
             report_text,
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=get_report_keyboard()
+            reply_markup=get_persistent_keyboard()  # Keep persistent menu
         )
         
     except Exception as e:
         logger.error(f"Error generating report: {e}")
         await message.reply_text(
-            "❌ Gagal membuat laporan. Silakan coba lagi."
+            "❌ Gagal membuat laporan. Silakan coba lagi.",
+            reply_markup=get_persistent_keyboard()
         )
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -481,7 +597,8 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• `/search 100000` - Cari nominal 100rb\n"
             "• `/search 2024-12-25` - Cari tanggal spesifik\n"
             "• `/search groceries` - Cari deskripsi groceries",
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_persistent_keyboard()
         )
         return
     
@@ -493,7 +610,8 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not results:
             await message.reply_text(
                 f"🔍 Tidak ditemukan transaksi untuk: *{search_query}*",
-                parse_mode=ParseMode.MARKDOWN
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_persistent_keyboard()
             )
             return
         
@@ -516,13 +634,15 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await message.reply_text(
             result_text,
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_persistent_keyboard()
         )
         
     except Exception as e:
         logger.error(f"Error searching transactions: {e}")
         await message.reply_text(
-            "❌ Gagal mencari transaksi. Silakan coba lagi."
+            "❌ Gagal mencari transaksi. Silakan coba lagi.",
+            reply_markup=get_persistent_keyboard()
         )
 
 async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -538,7 +658,8 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• `/ai tips hemat untuk makanan`\n"
             "• `/ai prediksi tabungan bulan depan`\n"
             "• `/ai kategori apa yang paling boros?`",
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_persistent_keyboard()
         )
         return
     
@@ -556,13 +677,15 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await message.reply_text(
             f"🤖 *AI Assistant:*\n\n{ai_response}",
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_persistent_keyboard()
         )
         
     except Exception as e:
         logger.error(f"Error in AI command: {e}")
         await message.reply_text(
-            "❌ AI sedang tidak tersedia. Silakan coba lagi nanti."
+            "❌ AI sedang tidak tersedia. Silakan coba lagi nanti.",
+            reply_markup=get_persistent_keyboard()
         )
 
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -586,18 +709,20 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 💸 Pengeluaran: {format_currency(today_expense)}
 📈 Net: {format_currency(today_income - today_expense)}
 
-💡 Ketik /report untuk laporan lengkap
+💡 Gunakan menu di bawah untuk aksi berikutnya
 """
         
         await message.reply_text(
             balance_text,
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_persistent_keyboard()  # Keep persistent menu
         )
         
     except Exception as e:
         logger.error(f"Error getting balance: {e}")
         await message.reply_text(
-            "❌ Gagal mengambil saldo. Silakan coba lagi."
+            "❌ Gagal mengambil saldo. Silakan coba lagi.",
+            reply_markup=get_persistent_keyboard()
         )
 
 async def categories_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -638,19 +763,26 @@ async def categories_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         await message.reply_text(
             category_text,
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_persistent_keyboard()
         )
         
     except Exception as e:
         logger.error(f"Error showing categories: {e}")
         await message.reply_text(
-            "❌ Gagal menampilkan kategori. Silakan coba lagi."
+            "❌ Gagal menampilkan kategori. Silakan coba lagi.",
+            reply_markup=get_persistent_keyboard()
         )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle regular text messages - FIXED VERSION"""
+    """Handle regular text messages with persistent menu support"""
     user_id = update.effective_user.id
     message_text = update.message.text
+    
+    # First, check if it's a persistent menu button
+    menu_handled = await handle_persistent_menu(update, context)
+    if menu_handled:
+        return
     
     # Try to parse as transaction with date
     transaction_data = parse_transaction_text(message_text)
@@ -679,7 +811,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if success:
                 type_icon = "💰" if transaction_data['type'] == 'income' else "💸"
                 
-                # FIXED: Format date for display
+                # Format date for display
                 today = datetime.now().date()
                 transaction_date_only = transaction_date.date()
                 
@@ -692,7 +824,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 elif transaction_date_only == (today + timedelta(days=2)):
                     date_display = " (lusa)"
                 else:
-                    # FIXED: Use Indonesian month names for consistency
                     month_names_id = {
                         1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr',
                         5: 'Mei', 6: 'Jun', 7: 'Jul', 8: 'Agu',
@@ -710,31 +841,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"📝 *Deskripsi:* {transaction_data['description']}\n"
                     f"🗓️ *Tanggal:* {actual_date_display}{date_display}\n"
                     f"🏷️ *Kategori:* {category}",
-                    parse_mode=ParseMode.MARKDOWN
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=get_persistent_keyboard()  # Keep persistent menu
                 )
             else:
-                await update.message.reply_text("❌ Gagal menyimpan transaksi. Silakan coba lagi.")
+                await update.message.reply_text(
+                    "❌ Gagal menyimpan transaksi. Silakan coba lagi.",
+                    reply_markup=get_persistent_keyboard()
+                )
                 
         except Exception as e:
             logger.error(f"Error processing transaction: {e}")
-            await update.message.reply_text("❌ Gagal memproses transaksi. Silakan coba lagi.")
+            await update.message.reply_text(
+                "❌ Gagal memproses transaksi. Silakan coba lagi.",
+                reply_markup=get_persistent_keyboard()
+            )
     else:
         # If not a transaction, maybe it's a question for AI
         if len(message_text) > 10 and any(word in message_text.lower() for word in 
                                          ['analisis', 'tips', 'saran', 'bagaimana', 'kapan', 'berapa']):
             await update.message.reply_text(
                 f"🤖 Untuk pertanyaan AI, gunakan: `/ai {message_text}`",
-                parse_mode=ParseMode.MARKDOWN
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_persistent_keyboard()
             )
         else:
             await update.message.reply_text(
                 "❓ Saya tidak mengerti pesan Anda.\n\n"
                 "💡 Contoh yang bisa saya pahami:\n"
-                "• Beli makan 25000\n"
+                "• Beli makan 25rb\n"
                 "• Gaji bulan ini 5 juta\n"
                 "• Bayar listrik 150rb kemarin\n"
-                "• Ngopi 15rb tanggal 22/08/2025\n"
-                "• Atau gunakan /help untuk bantuan"
+                "• Ngopi 15rb tanggal 22/08/2025\n\n"
+                "🚀 Atau gunakan menu persisten di bawah!",
+                reply_markup=get_persistent_keyboard()
             )
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -794,7 +934,8 @@ def get_conversation_handler():
         entry_points=[
             CommandHandler('income', income_command),
             CommandHandler('expense', expense_command),
-            CallbackQueryHandler(handle_callback, pattern="^(add_income|add_expense)$")
+            CallbackQueryHandler(lambda u, c: income_command(u, c), pattern="^add_income$"),
+            CallbackQueryHandler(lambda u, c: expense_command(u, c), pattern="^add_expense$")
         ],
         states={
             WAITING_FOR_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_amount)],

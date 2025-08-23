@@ -1,10 +1,11 @@
 """
-Gemini AI service for Finance Bot
+Gemini AI service for Finance Bot - CLEAN VERSION (No Syntax Errors)
 Handles AI-powered financial analysis and advice
 """
 
 import logging
 import json
+import re
 from typing import Dict, List, Optional
 import google.generativeai as genai
 from datetime import datetime
@@ -24,7 +25,7 @@ class GeminiAIService:
     async def initialize(self):
         """Initialize Gemini AI service"""
         try:
-            if not Config.GEMINI_API_KEY:
+            if not hasattr(Config, 'GEMINI_API_KEY') or not Config.GEMINI_API_KEY:
                 logger.error("Gemini API key not found")
                 return False
             
@@ -32,7 +33,7 @@ class GeminiAIService:
             genai.configure(api_key=Config.GEMINI_API_KEY)
             
             # Initialize the model
-            self.model = genai.GenerativeModel('gemini-2.5-flash')
+            self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
             
             self.is_initialized = True
             logger.info("Gemini AI service initialized successfully")
@@ -60,7 +61,10 @@ class GeminiAIService:
             # Generate response
             response = await self._generate_response(prompt)
             
-            return response
+            # FIXED: Clean response for Telegram compatibility
+            cleaned_response = self._clean_response_for_telegram(response)
+            
+            return cleaned_response
             
         except Exception as e:
             logger.error(f"Error getting financial advice: {e}")
@@ -121,20 +125,25 @@ class GeminiAIService:
     
     def _build_advice_prompt(self, user_question: str, context: str) -> str:
         """Build comprehensive prompt for financial advice"""
+        system_prompt = getattr(Config, 'AI_SYSTEM_PROMPT', 
+            "Anda adalah asisten keuangan yang membantu pengguna mengelola keuangan mereka dengan memberikan saran yang praktis dan mudah dipahami.")
+        
         return f"""
-{Config.AI_SYSTEM_PROMPT}
+{system_prompt}
 
 KONTEKS KEUANGAN USER:
 {context}
 
 PERTANYAAN USER: {user_question}
 
-Berikan jawaban yang:
-1. Spesifik berdasarkan data keuangan user
-2. Praktis dan bisa diterapkan
-3. Menggunakan angka konkret jika relevan
-4. Ramah dan mudah dipahami
-5. Dalam bahasa Indonesia
+INSTRUKSI RESPONSE:
+1. Berikan jawaban dalam bahasa Indonesia yang sederhana dan mudah dipahami
+2. Gunakan data konkret dari konteks keuangan user
+3. Berikan saran yang praktis dan actionable
+4. Hindari penggunaan karakter khusus yang berlebihan
+5. Format response dengan struktur yang jelas
+6. Jangan gunakan bold atau italic berlebihan
+7. Maksimal 500 kata
 
 Jika pertanyaan tidak berhubungan dengan keuangan, arahkan kembali ke topik keuangan dengan sopan.
 """
@@ -145,8 +154,36 @@ Jika pertanyaan tidak berhubungan dengan keuangan, arahkan kembali ke topik keua
             if not self.model:
                 return "AI service tidak tersedia."
             
-            # Generate content
-            response = self.model.generate_content(prompt)
+            # Generate content with safety settings
+            safety_settings = [
+                {
+                    "category": "HARM_CATEGORY_HARASSMENT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_HATE_SPEECH", 
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                }
+            ]
+            
+            response = self.model.generate_content(
+                prompt,
+                safety_settings=safety_settings,
+                generation_config={
+                    "temperature": 0.7,
+                    "top_p": 0.8,
+                    "top_k": 40,
+                    "max_output_tokens": 1000,
+                }
+            )
             
             if response.text:
                 return response.text.strip()
@@ -161,5 +198,129 @@ Jika pertanyaan tidak berhubungan dengan keuangan, arahkan kembali ke topik keua
                 return "🚫 Quota AI sudah habis untuk hari ini. Silakan coba lagi besok."
             elif "safety" in str(e).lower():
                 return "🛡️ Pertanyaan tidak dapat diproses karena alasan keamanan. Silakan ajukan pertanyaan yang berbeda."
+            elif "blocked" in str(e).lower():
+                return "🚫 Respons diblokir karena alasan keamanan. Silakan ajukan pertanyaan yang berbeda."
             else:
                 return "❌ Terjadi kesalahan pada AI service. Silakan coba lagi nanti."
+    
+    def _clean_response_for_telegram(self, response: str) -> str:
+        """FIXED: Clean AI response for Telegram compatibility"""
+        try:
+            if not response:
+                return "Tidak ada respons dari AI."
+            
+            # Remove or fix problematic characters
+            cleaned = response
+            
+            # Fix common markdown issues
+            # Remove excessive bold/italic markers
+            cleaned = re.sub(r'\*{3,}', '**', cleaned)  # Reduce multiple * to **
+            cleaned = re.sub(r'_{3,}', '__', cleaned)   # Reduce multiple _ to __
+            
+            # Fix unmatched markdown
+            # Count asterisks and fix unmatched ones
+            asterisk_count = cleaned.count('*')
+            if asterisk_count % 2 != 0:
+                # Add closing asterisk if unmatched
+                cleaned = cleaned + '*'
+            
+            # Fix unmatched underscores
+            underscore_count = cleaned.count('_')
+            if underscore_count % 2 != 0:
+                # Add closing underscore if unmatched
+                cleaned = cleaned + '_'
+            
+            # Remove problematic characters that can cause parsing issues
+            # Remove zero-width characters and other invisible characters
+            cleaned = re.sub(r'[\u200b-\u200f\u2060-\u206f]', '', cleaned)
+            
+            # Fix bullet points and special characters
+            cleaned = re.sub(r'[•◦▪▫]', '•', cleaned)  # Standardize bullet points
+            cleaned = re.sub(r'["""]', '"', cleaned)   # Standardize quotes
+            cleaned = re.sub(r"['']", "'", cleaned)   # FIXED: Standardize apostrophes (no smart quotes)
+            
+            # Ensure proper line breaks
+            cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)  # Max 2 consecutive line breaks
+            
+            # Remove leading/trailing whitespace
+            cleaned = cleaned.strip()
+            
+            # Truncate if too long (Telegram has limits)
+            if len(cleaned) > 4000:
+                cleaned = cleaned[:3900] + "...\n\n✂️ Respons dipotong karena terlalu panjang."
+            
+            # FIXED: Escape problematic markdown sequences
+            # Handle common markdown parsing issues
+            problematic_patterns = [
+                (r'\*([^*\n]{0,5})\*([^*\n]{0,5})\*', r'*\1*\2'),  # Fix triple asterisks
+                (r'_([^_\n]{0,5})_([^_\n]{0,5})_', r'_\1_\2'),     # Fix triple underscores
+                (r'\[([^\]]*)\]\(([^)]*)\)', r'\1 (\2)'),          # Fix broken links
+            ]
+            
+            for pattern, replacement in problematic_patterns:
+                cleaned = re.sub(pattern, replacement, cleaned)
+            
+            # Final validation - if still problematic, fall back to plain text
+            if self._has_markdown_issues(cleaned):
+                logger.warning("Response has markdown issues, converting to plain text")
+                cleaned = self._convert_to_plain_text(cleaned)
+            
+            return cleaned
+            
+        except Exception as e:
+            logger.error(f"Error cleaning response for Telegram: {e}")
+            # Fallback to plain text
+            return self._convert_to_plain_text(response)
+    
+    def _has_markdown_issues(self, text: str) -> bool:
+        """Check if text has markdown parsing issues"""
+        try:
+            # Check for unmatched markdown
+            asterisk_count = text.count('*')
+            underscore_count = text.count('_')
+            
+            # Basic checks for problematic patterns
+            if asterisk_count % 2 != 0 or underscore_count % 2 != 0:
+                return True
+            
+            # Check for problematic sequences
+            problematic_sequences = [
+                r'\*\*\*+',  # Too many asterisks
+                r'___+',     # Too many underscores
+                r'\[[^\]]*$', # Unclosed brackets
+                r'[^\x00-\x7F]{10,}',  # Too many non-ASCII characters
+            ]
+            
+            for pattern in problematic_sequences:
+                if re.search(pattern, text):
+                    return True
+            
+            return False
+            
+        except Exception:
+            return True  # If we can't check, assume there are issues
+    
+    def _convert_to_plain_text(self, text: str) -> str:
+        """Convert markdown text to plain text"""
+        try:
+            if not text:
+                return "Tidak ada respons dari AI."
+            
+            # Remove all markdown formatting
+            plain = text
+            plain = re.sub(r'\*\*([^*]+)\*\*', r'\1', plain)  # Bold
+            plain = re.sub(r'\*([^*]+)\*', r'\1', plain)      # Italic
+            plain = re.sub(r'__([^_]+)__', r'\1', plain)      # Bold underscore
+            plain = re.sub(r'_([^_]+)_', r'\1', plain)        # Italic underscore
+            plain = re.sub(r'`([^`]+)`', r'\1', plain)        # Code
+            plain = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', plain)  # Links
+            
+            # Clean up extra whitespace
+            plain = re.sub(r'\n{3,}', '\n\n', plain)
+            plain = plain.strip()
+            
+            return plain
+            
+        except Exception as e:
+            logger.error(f"Error converting to plain text: {e}")
+            return "Maaf, terjadi kesalahan dalam memproses respons AI."
