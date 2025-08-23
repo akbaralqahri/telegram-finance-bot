@@ -1,6 +1,5 @@
 """
-Helper functions for Finance Bot
-Contains utility functions for parsing, formatting, and data processing
+Helper functions for Finance Bot with Enhanced Date Parsing
 """
 
 import re
@@ -14,14 +13,7 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 def parse_amount(amount_text: str) -> Optional[float]:
-    """
-    Parse amount from various text formats
-    
-    Supported formats:
-    - 150000, 150.000, 150,000
-    - 1.5k, 1.5jt, 1.5 juta
-    - 150rb, 150 ribu
-    """
+    """Parse amount from various text formats"""
     if not amount_text:
         return None
     
@@ -32,30 +24,24 @@ def parse_amount(amount_text: str) -> Optional[float]:
     amount_text = re.sub(r'[rp$€£¥₹]', '', amount_text)
     
     try:
-        # Pattern 1: Simple numbers with separators (1.000.000,50 or 1,000,000.50)
+        # Pattern 1: Simple numbers with separators
         if re.match(r'^\d+([.,]\d{3})*([.,]\d{1,2})?$', amount_text):
             # Handle different decimal separators
             if ',' in amount_text and '.' in amount_text:
-                # Determine which is decimal separator
                 if amount_text.rfind(',') > amount_text.rfind('.'):
-                    # Comma is decimal separator (European style)
                     amount_text = amount_text.replace('.', '').replace(',', '.')
                 else:
-                    # Dot is decimal separator (US style)
                     amount_text = amount_text.replace(',', '')
             elif ',' in amount_text:
-                # Check if comma is thousand separator or decimal
                 parts = amount_text.split(',')
                 if len(parts) == 2 and len(parts[1]) <= 2:
-                    # Decimal separator
                     amount_text = amount_text.replace(',', '.')
                 else:
-                    # Thousand separator
                     amount_text = amount_text.replace(',', '')
             
             return float(amount_text)
         
-        # Pattern 2: Numbers with multipliers (1.5k, 2jt, etc.)
+        # Pattern 2: Numbers with multipliers
         multiplier_pattern = r'(\d+(?:[.,]\d+)?)\s*([kjtrb]|juta|ribu|rb|thousand|million|k|m|t)'
         match = re.search(multiplier_pattern, amount_text)
         
@@ -65,15 +51,14 @@ def parse_amount(amount_text: str) -> Optional[float]:
             
             base_amount = float(number_part)
             
-            # Apply multipliers
             if multiplier in ['k', 'ribu', 'rb', 'thousand']:
                 return base_amount * 1000
             elif multiplier in ['juta', 'million', 'm']:
                 return base_amount * 1000000
             elif multiplier in ['t', 'trillion']:
                 return base_amount * 1000000000000
-            
-        # Pattern 3: Simple number without separators
+        
+        # Pattern 3: Simple number
         number_match = re.search(r'(\d+(?:\.\d+)?)', amount_text)
         if number_match:
             return float(number_match.group(1))
@@ -116,16 +101,167 @@ def format_currency(amount: Union[float, int], currency: str = None) -> str:
         logger.error(f"Error formatting currency: {e}")
         return f"{Config.CURRENCY_SYMBOL} 0"
 
+def parse_date_from_text(date_text: str) -> Optional[datetime]:
+    """
+    Enhanced date parsing from various text formats
+    
+    Supported formats:
+    - Natural language: hari ini, kemarin, besok, lusa
+    - Days: Senin, Selasa, Rabu, dst
+    - Dates: 25/12/2024, 25-12-2024, 25 Des, 25 Desember
+    - Shortcuts: tgl 15, tanggal 20
+    - Relative: 3 hari lalu, seminggu lalu, 2 minggu lalu
+    """
+    if not date_text:
+        return None
+        
+    try:
+        date_text = date_text.strip().lower()
+        today = datetime.now()
+        
+        # Natural language dates
+        if date_text in ['hari ini', 'today', 'sekarang']:
+            return today
+        elif date_text in ['kemarin', 'yesterday']:
+            return today - timedelta(days=1)
+        elif date_text in ['besok', 'tomorrow']:
+            return today + timedelta(days=1)
+        elif date_text in ['lusa', 'day after tomorrow']:
+            return today + timedelta(days=2)
+        
+        # Days of week (this week)
+        days_map = {
+            'senin': 0, 'monday': 0,
+            'selasa': 1, 'tuesday': 1,
+            'rabu': 2, 'wednesday': 2,
+            'kamis': 3, 'thursday': 3,
+            'jumat': 4, 'friday': 4,
+            'sabtu': 5, 'saturday': 5,
+            'minggu': 6, 'sunday': 6, 'ahad': 6
+        }
+        
+        for day_name, day_num in days_map.items():
+            if day_name in date_text:
+                days_ahead = day_num - today.weekday()
+                if days_ahead <= 0:  # Target day already happened this week
+                    days_ahead += 7
+                return today + timedelta(days=days_ahead)
+        
+        # Relative dates
+        relative_patterns = [
+            (r'(\d+)\s*hari\s*lalu', lambda m: today - timedelta(days=int(m.group(1)))),
+            (r'(\d+)\s*hari\s*yang\s*lalu', lambda m: today - timedelta(days=int(m.group(1)))),
+            (r'seminggu\s*lalu', lambda m: today - timedelta(weeks=1)),
+            (r'(\d+)\s*minggu\s*lalu', lambda m: today - timedelta(weeks=int(m.group(1)))),
+            (r'(\d+)\s*bulan\s*lalu', lambda m: today - timedelta(days=int(m.group(1)) * 30)),
+        ]
+        
+        for pattern, func in relative_patterns:
+            match = re.search(pattern, date_text)
+            if match:
+                return func(match)
+        
+        # Shortcut formats: tgl 15, tanggal 20
+        shortcut_patterns = [
+            r'(?:tgl|tanggal)\s*(\d{1,2})',
+            r'(?:pada\s*)?(?:tanggal\s*)?(\d{1,2})'
+        ]
+        
+        for pattern in shortcut_patterns:
+            match = re.search(pattern, date_text)
+            if match:
+                day = int(match.group(1))
+                if 1 <= day <= 31:
+                    try:
+                        # Try this month first
+                        result = today.replace(day=day)
+                        if result < today:
+                            # If the date is in the past, assume next month
+                            if today.month == 12:
+                                result = result.replace(year=today.year + 1, month=1)
+                            else:
+                                result = result.replace(month=today.month + 1)
+                        return result
+                    except ValueError:
+                        # Invalid day for current month, try next month
+                        try:
+                            if today.month == 12:
+                                return datetime(today.year + 1, 1, day)
+                            else:
+                                return datetime(today.year, today.month + 1, day)
+                        except ValueError:
+                            continue
+        
+        # Standard date formats
+        date_formats = [
+            '%Y-%m-%d',      # 2024-12-25
+            '%d/%m/%Y',      # 25/12/2024
+            '%d-%m-%Y',      # 25-12-2024
+            '%d/%m/%y',      # 25/12/24
+            '%d-%m-%y',      # 25-12-24
+            '%d.%m.%Y',      # 25.12.2024
+            '%d %m %Y',      # 25 12 2024
+        ]
+        
+        for fmt in date_formats:
+            try:
+                return datetime.strptime(date_text, fmt)
+            except ValueError:
+                continue
+        
+        # Month names (Indonesian)
+        month_names = {
+            'januari': 1, 'jan': 1,
+            'februari': 2, 'feb': 2,
+            'maret': 3, 'mar': 3,
+            'april': 4, 'apr': 4,
+            'mei': 5,
+            'juni': 6, 'jun': 6,
+            'juli': 7, 'jul': 7,
+            'agustus': 8, 'agu': 8, 'ags': 8,
+            'september': 9, 'sep': 9,
+            'oktober': 10, 'okt': 10,
+            'november': 11, 'nov': 11,
+            'desember': 12, 'des': 12
+        }
+        
+        # Date with month names: 25 Desember, 25 Des 2024
+        month_pattern = r'(\d{1,2})\s+([a-z]+)(?:\s+(\d{4}))?'
+        match = re.search(month_pattern, date_text)
+        if match:
+            day = int(match.group(1))
+            month_str = match.group(2)
+            year = int(match.group(3)) if match.group(3) else today.year
+            
+            if month_str in month_names:
+                month = month_names[month_str]
+                try:
+                    result = datetime(year, month, day)
+                    # If the date is in the past and no year specified, assume next year
+                    if result < today and not match.group(3):
+                        result = result.replace(year=today.year + 1)
+                    return result
+                except ValueError:
+                    pass
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error parsing date '{date_text}': {e}")
+        return None
+
 def parse_transaction_text(text: str) -> Optional[Dict]:
     """
-    Parse natural language transaction text
+    Enhanced transaction parsing with date support
     
     Examples:
-    - "Beli makan 25000" -> {'type': 'expense', 'amount': 25000, 'description': 'Beli makan'}
-    - "Gaji bulan ini 5 juta" -> {'type': 'income', 'amount': 5000000, 'description': 'Gaji bulan ini'}
+    - "Beli makan 25000" -> {'type': 'expense', 'amount': 25000, 'description': 'Beli makan', 'date': today}
+    - "Gaji 5 juta kemarin" -> {'type': 'income', 'amount': 5000000, 'description': 'Gaji', 'date': yesterday}
+    - "Bayar listrik 150rb tanggal 1" -> {'type': 'expense', 'amount': 150000, 'description': 'Bayar listrik', 'date': 1st of month}
     """
     try:
         text = text.strip()
+        original_text = text
         
         # Income keywords
         income_keywords = [
@@ -134,14 +270,43 @@ def parse_transaction_text(text: str) -> Optional[Dict]:
             'bunga', 'profit', 'keuntungan', 'freelance', 'project fee'
         ]
         
-        # Expense keywords  
+        # Expense keywords
         expense_keywords = [
             'beli', 'bayar', 'buat', 'untuk', 'spend', 'expense', 'keluar',
             'shopping', 'belanja', 'makan', 'transport', 'bensin', 'listrik',
             'internet', 'tagihan', 'cicilan', 'top up', 'isi ulang'
         ]
         
-        # Try to extract amount from text
+        # Extract date from text first
+        transaction_date = None
+        date_patterns = [
+            r'\b(kemarin|yesterday)\b',
+            r'\b(besok|tomorrow)\b', 
+            r'\b(lusa)\b',
+            r'\b(senin|selasa|rabu|kamis|jumat|sabtu|minggu|ahad)\b',
+            r'\b(?:tgl|tanggal)\s*(\d{1,2})\b',
+            r'\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})\b',
+            r'\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})\b',
+            r'\b(\d{1,2})\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|jan|feb|mar|apr|jun|jul|agu|sep|okt|nov|des)\b',
+            r'\b(\d+)\s*hari\s*(?:yang\s*)?lalu\b',
+            r'\b(\d+)\s*minggu\s*(?:yang\s*)?lalu\b',
+        ]
+        
+        for pattern in date_patterns:
+            matches = re.finditer(pattern, text, re.IGNORECASE)
+            for match in matches:
+                date_text = match.group(0)
+                parsed_date = parse_date_from_text(date_text)
+                if parsed_date:
+                    transaction_date = parsed_date
+                    # Remove date from text
+                    text = text.replace(match.group(0), ' ').strip()
+                    text = re.sub(r'\s+', ' ', text)  # Clean up extra spaces
+                    break
+            if transaction_date:
+                break
+        
+        # Extract amount from remaining text
         amount = None
         amount_patterns = [
             r'(\d+(?:[.,]\d{3})*(?:[.,]\d{2})?)',  # Numbers with separators
@@ -158,6 +323,7 @@ def parse_transaction_text(text: str) -> Optional[Dict]:
                         amount = parsed_amount
                         # Remove amount from text to get description
                         text = re.sub(re.escape(match), '', text, 1).strip()
+                        text = re.sub(r'\s+', ' ', text)  # Clean up extra spaces
                         break
                 if amount:
                     break
@@ -167,11 +333,12 @@ def parse_transaction_text(text: str) -> Optional[Dict]:
         
         # Determine transaction type
         text_lower = text.lower()
+        original_lower = original_text.lower()
         transaction_type = 'expense'  # Default to expense
         
-        # Check for income keywords
+        # Check for income keywords in both original and remaining text
         for keyword in income_keywords:
-            if keyword in text_lower:
+            if keyword in text_lower or keyword in original_lower:
                 transaction_type = 'income'
                 break
         
@@ -180,14 +347,24 @@ def parse_transaction_text(text: str) -> Optional[Dict]:
         if not description:
             description = 'Transaksi' if transaction_type == 'expense' else 'Pemasukan'
         
+        # Remove common connecting words
+        description = re.sub(r'\b(pada|di|untuk|dari|ke|yang|adalah|dengan)\b', '', description, flags=re.IGNORECASE)
+        description = re.sub(r'\s+', ' ', description).strip()
+        
         # Capitalize first letter
         description = description[0].upper() + description[1:] if description else 'Transaksi'
         
-        return {
+        result = {
             'type': transaction_type,
             'amount': amount,
             'description': description
         }
+        
+        # Add date if found
+        if transaction_date:
+            result['date'] = transaction_date
+        
+        return result
         
     except Exception as e:
         logger.error(f"Error parsing transaction text '{text}': {e}")
@@ -231,64 +408,11 @@ def detect_transaction_category(description: str, transaction_type: str) -> str:
         return 'Lainnya'
 
 def validate_date(date_string: str) -> Optional[datetime]:
-    """Validate and parse date string"""
-    try:
-        # Common date formats
-        formats = [
-            '%Y-%m-%d',
-            '%d/%m/%Y',
-            '%d-%m-%Y',
-            '%d/%m/%y',
-            '%d-%m-%y'
-        ]
-        
-        for fmt in formats:
-            try:
-                return datetime.strptime(date_string, fmt)
-            except ValueError:
-                continue
-        
-        # Natural language dates
-        today = datetime.now()
-        date_lower = date_string.lower().strip()
-        
-        if date_lower in ['hari ini', 'today']:
-            return today
-        elif date_lower in ['kemarin', 'yesterday']:
-            return today - timedelta(days=1)
-        elif date_lower in ['besok', 'tomorrow']:
-            return today + timedelta(days=1)
-        elif date_lower in ['lusa']:
-            return today + timedelta(days=2)
-        
-        # Days of week
-        days_map = {
-            'senin': 0, 'monday': 0,
-            'selasa': 1, 'tuesday': 1,
-            'rabu': 2, 'wednesday': 2,
-            'kamis': 3, 'thursday': 3,
-            'jumat': 4, 'friday': 4,
-            'sabtu': 5, 'saturday': 5,
-            'minggu': 6, 'sunday': 6
-        }
-        
-        for day_name, day_num in days_map.items():
-            if day_name in date_lower:
-                days_ahead = day_num - today.weekday()
-                if days_ahead <= 0:  # Target day already happened this week
-                    days_ahead += 7
-                return today + timedelta(days=days_ahead)
-        
-        return None
-        
-    except Exception as e:
-        logger.error(f"Error validating date '{date_string}': {e}")
-        return None
+    """Validate and parse date string (legacy function, use parse_date_from_text instead)"""
+    return parse_date_from_text(date_string)
 
 def get_user_timezone(user_id: int = None) -> str:
-    """Get user's timezone (can be expanded to store per-user preferences)"""
-    # For now, return default timezone from config
-    # In the future, this could query user preferences from database
+    """Get user's timezone"""
     return Config.TIMEZONE
 
 def convert_to_user_timezone(dt: datetime, user_id: int = None) -> datetime:
@@ -298,7 +422,6 @@ def convert_to_user_timezone(dt: datetime, user_id: int = None) -> datetime:
         timezone = pytz.timezone(user_tz)
         
         if dt.tzinfo is None:
-            # Assume UTC if no timezone info
             dt = pytz.UTC.localize(dt)
         
         return dt.astimezone(timezone)
@@ -366,3 +489,30 @@ def validate_amount_range(amount: float, min_amount: float = 0.01, max_amount: f
         return min_amount <= amount <= max_amount
     except (TypeError, ValueError):
         return False
+
+def get_relative_date_text(date: datetime) -> str:
+    """Get relative date text for display"""
+    try:
+        today = datetime.now().date()
+        target_date = date.date()
+        
+        diff = (target_date - today).days
+        
+        if diff == 0:
+            return "hari ini"
+        elif diff == -1:
+            return "kemarin"
+        elif diff == 1:
+            return "besok"
+        elif diff == 2:
+            return "lusa"
+        elif -7 < diff < 0:
+            return f"{abs(diff)} hari lalu"
+        elif 0 < diff < 7:
+            return f"{diff} hari lagi"
+        else:
+            return date.strftime('%d %B %Y')
+            
+    except Exception as e:
+        logger.error(f"Error getting relative date text: {e}")
+        return date.strftime('%d/%m/%Y')

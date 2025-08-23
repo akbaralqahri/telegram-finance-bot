@@ -1,5 +1,5 @@
 """
-Bot command handlers for Telegram Finance Bot
+Bot command handlers for Telegram Finance Bot with Date Input Feature
 """
 
 import logging
@@ -13,11 +13,11 @@ from services.google_sheets import GoogleSheetsService
 from services.gemini_ai import GeminiAIService
 from utils.helpers import (
     parse_amount, parse_transaction_text, format_currency,
-    get_user_timezone, validate_date
+    get_user_timezone, validate_date, parse_date_from_text
 )
 from bot.keyboards import (
     get_main_keyboard, get_category_keyboard, get_report_keyboard,
-    get_confirmation_keyboard
+    get_confirmation_keyboard, get_date_keyboard
 )
 
 logger = logging.getLogger(__name__)
@@ -25,10 +25,11 @@ logger = logging.getLogger(__name__)
 # Conversation states
 WAITING_FOR_AMOUNT = 1
 WAITING_FOR_DESCRIPTION = 2
-WAITING_FOR_CATEGORY = 3
-WAITING_FOR_DATE = 4
+WAITING_FOR_DATE = 3
+WAITING_FOR_CATEGORY = 4
+WAITING_FOR_CONFIRMATION = 5
 
-# Global services (will be initialized per user)
+# Global services
 sheets_service = GoogleSheetsService()
 ai_service = GeminiAIService()
 
@@ -70,7 +71,14 @@ Halo {user.first_name}! 👋
 💡 *Cara Cepat Catat Transaksi:*
 • Ketik: "Beli makan 25000"
 • Ketik: "Gaji bulan ini 5 juta"
-• Ketik: "Bayar listrik 150rb"
+• Ketik: "Bayar listrik 150rb kemarin"
+• Ketik: "Beli groceries 200000 tanggal 15"
+
+🗓️ *Format Tanggal Didukung:*
+• hari ini, kemarin, besok, lusa
+• Senin, Selasa, Rabu, dst
+• 25/12/2024, 25-12-2024
+• tanggal 15, tgl 20
 
 Atau gunakan menu di bawah ini:
 """
@@ -95,12 +103,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🔹 *Cara Input Transaksi Cepat:*
 • "Beli groceries 150000"
 • "Gaji november 8500000" 
-• "Makan di restaurant 75000"
-• "Bayar internet 350000"
+• "Makan di restaurant 75000 kemarin"
+• "Bayar internet 350000 tanggal 1"
 
 🔹 *Format Nominal yang Diterima:*
 • 150000, 150.000, 150,000
 • 1.5jt, 1.5 juta, 150k, 150rb
+
+🔹 *Format Tanggal yang Diterima:*
+• *Natural Language:* hari ini, kemarin, besok, lusa
+• *Hari:* Senin, Selasa, Rabu, dst (minggu ini)
+• *Tanggal:* 25/12/2024, 25-12-2024, 25 Des
+• *Shortcut:* tgl 15, tanggal 20
 
 🔹 *Perintah Tersedia:*
 • `/income` - Tambah pemasukan
@@ -116,10 +130,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • `/ai tips hemat untuk makanan`
 • `/ai prediksi tabungan bulan depan`
 
-🔹 *Laporan Tersedia:*
-• Harian, Mingguan, Bulanan
-• Berdasarkan kategori
-
 ❓ Butuh bantuan? Ketik /start untuk menu utama
 """
     
@@ -130,28 +140,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def income_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /income command - add income transaction"""
-    user_id = update.effective_user.id
-    
-    # Determine message object (could be from command or callback)
     message = update.message if update.message else update.callback_query.message
     
-    # Check if amount is provided in command
-    if context.args:
-        amount_text = ' '.join(context.args)
-        amount = parse_amount(amount_text)
-        
-        if amount:
-            # Store in context for next step
-            context.user_data['transaction_type'] = 'income'
-            context.user_data['amount'] = amount
-            
-            await message.reply_text(
-                f"💰 Pemasukan: {format_currency(amount)}\n\n"
-                "📝 Masukkan deskripsi pemasukan:"
-            )
-            return WAITING_FOR_DESCRIPTION
-    
-    # Ask for amount
     await message.reply_text(
         "💰 *Tambah Pemasukan*\n\n"
         "💵 Masukkan jumlah pemasukan:\n"
@@ -163,28 +153,8 @@ async def income_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def expense_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /expense command - add expense transaction"""
-    user_id = update.effective_user.id
-    
-    # Determine message object (could be from command or callback)
     message = update.message if update.message else update.callback_query.message
     
-    # Check if amount is provided in command
-    if context.args:
-        amount_text = ' '.join(context.args)
-        amount = parse_amount(amount_text)
-        
-        if amount:
-            # Store in context for next step
-            context.user_data['transaction_type'] = 'expense'
-            context.user_data['amount'] = amount
-            
-            await message.reply_text(
-                f"💸 Pengeluaran: {format_currency(amount)}\n\n"
-                "📝 Masukkan deskripsi pengeluaran:"
-            )
-            return WAITING_FOR_DESCRIPTION
-    
-    # Ask for amount
     await message.reply_text(
         "💸 *Tambah Pengeluaran*\n\n"
         "💵 Masukkan jumlah pengeluaran:\n"
@@ -194,11 +164,213 @@ async def expense_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['transaction_type'] = 'expense'
     return WAITING_FOR_AMOUNT
 
+async def process_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Process amount input"""
+    amount = parse_amount(update.message.text)
+    
+    if not amount or amount <= 0:
+        await update.message.reply_text(
+            "❌ Format nominal tidak valid. Silakan masukkan angka yang benar.\n"
+            "Contoh: 150000, 150rb, 1.5jt"
+        )
+        return WAITING_FOR_AMOUNT
+    
+    context.user_data['amount'] = amount
+    transaction_type = context.user_data.get('transaction_type', 'expense')
+    type_icon = "💰" if transaction_type == 'income' else "💸"
+    
+    await update.message.reply_text(
+        f"{type_icon} Jumlah: {format_currency(amount)}\n\n"
+        "📝 Masukkan deskripsi transaksi:\n"
+        "Contoh: Beli groceries, Gaji bulanan, Bayar listrik",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    return WAITING_FOR_DESCRIPTION
+
+async def process_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Process description input"""
+    description = update.message.text.strip()
+    
+    if len(description) < 3:
+        await update.message.reply_text(
+            "❌ Deskripsi terlalu pendek. Minimal 3 karakter."
+        )
+        return WAITING_FOR_DESCRIPTION
+    
+    context.user_data['description'] = description
+    transaction_type = context.user_data.get('transaction_type', 'expense')
+    type_icon = "💰" if transaction_type == 'income' else "💸"
+    
+    await update.message.reply_text(
+        f"{type_icon} Deskripsi: {description}\n\n"
+        "🗓️ Pilih tanggal transaksi atau ketik tanggal custom:",
+        reply_markup=get_date_keyboard()
+    )
+    
+    return WAITING_FOR_DATE
+
+async def process_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Process date input"""
+    date_input = update.message.text.strip() if update.message else None
+    
+    # If from callback query, get the date
+    if update.callback_query:
+        date_input = update.callback_query.data.replace("date_", "")
+    
+    if not date_input:
+        await update.message.reply_text("❌ Input tanggal tidak valid.")
+        return WAITING_FOR_DATE
+    
+    # Parse the date
+    transaction_date = parse_date_from_text(date_input)
+    
+    if not transaction_date:
+        await update.message.reply_text(
+            "❌ Format tanggal tidak valid.\n\n"
+            "Format yang diterima:\n"
+            "• hari ini, kemarin, besok\n"
+            "• Senin, Selasa, dst\n"
+            "• 25/12/2024, 25-12-2024\n"
+            "• tgl 15, tanggal 20"
+        )
+        return WAITING_FOR_DATE
+    
+    # Check if date is not too far in the future
+    max_future_date = datetime.now() + timedelta(days=365)
+    if transaction_date > max_future_date:
+        await update.message.reply_text(
+            "❌ Tanggal terlalu jauh di masa depan (maksimal 1 tahun ke depan)."
+        )
+        return WAITING_FOR_DATE
+    
+    context.user_data['transaction_date'] = transaction_date
+    
+    # Show confirmation
+    await show_transaction_confirmation(update, context)
+    return WAITING_FOR_CONFIRMATION
+
+async def show_transaction_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show transaction confirmation before saving"""
+    user_data = context.user_data
+    transaction_type = user_data.get('transaction_type', 'expense')
+    amount = user_data.get('amount', 0)
+    description = user_data.get('description', '')
+    transaction_date = user_data.get('transaction_date', datetime.now())
+    
+    type_icon = "💰" if transaction_type == 'income' else "💸"
+    type_text = "Pemasukan" if transaction_type == 'income' else "Pengeluaran"
+    
+    # Auto-detect category
+    category = await sheets_service.detect_category(description, transaction_type)
+    user_data['category'] = category
+    
+    # Format date for display
+    if transaction_date.date() == datetime.now().date():
+        date_display = "Hari ini"
+    elif transaction_date.date() == (datetime.now() - timedelta(days=1)).date():
+        date_display = "Kemarin"
+    elif transaction_date.date() == (datetime.now() + timedelta(days=1)).date():
+        date_display = "Besok"
+    else:
+        date_display = transaction_date.strftime("%d %B %Y")
+    
+    confirmation_text = f"""
+📝 *Konfirmasi Transaksi*
+
+{type_icon} *Jenis:* {type_text}
+💵 *Jumlah:* {format_currency(amount)}
+📝 *Deskripsi:* {description}
+🗓️ *Tanggal:* {date_display}
+🏷️ *Kategori:* {category}
+
+Apakah data sudah benar?
+"""
+    
+    message = update.message if update.message else update.callback_query.message
+    
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            confirmation_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_confirmation_keyboard()
+        )
+    else:
+        await message.reply_text(
+            confirmation_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_confirmation_keyboard()
+        )
+
+async def process_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Process confirmation response"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "confirm_yes":
+        # Save transaction
+        await save_transaction(update, context)
+    elif query.data == "confirm_no":
+        # Cancel transaction
+        await query.edit_message_text(
+            "❌ Transaksi dibatalkan.\n\n"
+            "Ketik /start untuk menu utama atau /income atau /expense untuk mencoba lagi."
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+    
+    return ConversationHandler.END
+
+async def save_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Save transaction to spreadsheet"""
+    user_data = context.user_data
+    user_id = update.effective_user.id
+    
+    try:
+        success = await sheets_service.add_transaction_with_date(
+            user_id=user_id,
+            amount=user_data.get('amount'),
+            description=user_data.get('description'),
+            category=user_data.get('category'),
+            transaction_type=user_data.get('transaction_type'),
+            transaction_date=user_data.get('transaction_date', datetime.now())
+        )
+        
+        if success:
+            type_icon = "💰" if user_data['transaction_type'] == 'income' else "💸"
+            transaction_date = user_data.get('transaction_date', datetime.now())
+            
+            # Format date for display
+            if transaction_date.date() == datetime.now().date():
+                date_display = "hari ini"
+            elif transaction_date.date() == (datetime.now() - timedelta(days=1)).date():
+                date_display = "kemarin"
+            else:
+                date_display = transaction_date.strftime("%d %B %Y")
+            
+            await update.callback_query.edit_message_text(
+                f"✅ *Transaksi berhasil dicatat!*\n\n"
+                f"{type_icon} *{user_data['transaction_type'].title()}:* {format_currency(user_data['amount'])}\n"
+                f"📝 *Deskripsi:* {user_data['description']}\n"
+                f"🗓️ *Tanggal:* {date_display}\n"
+                f"🏷️ *Kategori:* {user_data['category']}\n\n"
+                f"Ketik /balance untuk cek saldo atau /report untuk laporan.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        else:
+            await update.callback_query.edit_message_text("❌ Gagal menyimpan transaksi. Silakan coba lagi.")
+            
+        # Clear user data
+        context.user_data.clear()
+        
+    except Exception as e:
+        logger.error(f"Error saving transaction: {e}")
+        await update.callback_query.edit_message_text("❌ Terjadi kesalahan saat menyimpan.")
+
+# Keep all the other handlers from before
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /report command - show financial reports"""
     user_id = update.effective_user.id
-    
-    # Determine message object (could be from command or callback)
     message = update.message if update.message else update.callback_query.message
     
     # Default to monthly report
@@ -278,7 +450,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Contoh pencarian:\n"
             "• `/search makanan` - Cari kategori makanan\n"
             "• `/search 100000` - Cari nominal 100rb\n"
-            "• `/search hari ini` - Cari transaksi hari ini\n"
+            "• `/search 2024-12-25` - Cari tanggal spesifik\n"
             "• `/search groceries` - Cari deskripsi groceries",
             parse_mode=ParseMode.MARKDOWN
         )
@@ -451,7 +623,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     message_text = update.message.text
     
-    # Try to parse as transaction
+    # Try to parse as transaction with date
     transaction_data = parse_transaction_text(message_text)
     
     if transaction_data:
@@ -462,22 +634,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 transaction_data['type']
             )
             
-            # Add transaction
-            success = await sheets_service.add_transaction(
+            # Get transaction date (could be parsed from text or default to today)
+            transaction_date = transaction_data.get('date', datetime.now())
+            
+            # Add transaction with custom date
+            success = await sheets_service.add_transaction_with_date(
                 user_id=user_id,
                 amount=transaction_data['amount'],
                 description=transaction_data['description'],
                 category=category,
-                transaction_type=transaction_data['type']
+                transaction_type=transaction_data['type'],
+                transaction_date=transaction_date
             )
             
             if success:
                 type_icon = "💰" if transaction_data['type'] == 'income' else "💸"
+                
+                # Format date for display
+                if transaction_date.date() == datetime.now().date():
+                    date_display = ""
+                elif transaction_date.date() == (datetime.now() - timedelta(days=1)).date():
+                    date_display = " (kemarin)"
+                else:
+                    date_display = f" ({transaction_date.strftime('%d %b %Y')})"
+                
                 await update.message.reply_text(
                     f"✅ Transaksi berhasil dicatat!\n\n"
                     f"{type_icon} *{transaction_data['type'].title()}:* {format_currency(transaction_data['amount'])}\n"
                     f"📝 *Deskripsi:* {transaction_data['description']}\n"
-                    f"🏷️ *Kategori:* {category}",
+                    f"🏷️ *Kategori:* {category}{date_display}",
                     parse_mode=ParseMode.MARKDOWN
                 )
             else:
@@ -500,6 +685,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "💡 Contoh yang bisa saya pahami:\n"
                 "• Beli makan 25000\n"
                 "• Gaji bulan ini 5 juta\n"
+                "• Bayar listrik 150rb kemarin\n"
                 "• Atau gunakan /help untuk bantuan"
             )
 
@@ -535,11 +721,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await categories_command(update, context)
         elif data == "help":
             await help_command(update, context)
-        elif data.startswith("category_"):
-            # Handle category selection
-            category = data.replace("category_", "")
-            context.user_data['selected_category'] = category
-            await process_transaction_with_category(update, context)
+        elif data.startswith("date_"):
+            await process_date(update, context)
+        elif data in ["confirm_yes", "confirm_no"]:
+            await process_confirmation(update, context)
         else:
             await query.edit_message_text("❓ Pilihan tidak dikenali. Silakan gunakan /start untuk menu utama.")
             
@@ -552,35 +737,29 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-async def process_transaction_with_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Process transaction after category selection"""
-    user_data = context.user_data
-    user_id = update.effective_user.id
+# Conversation handler setup
+def get_conversation_handler():
+    """Get the conversation handler for step-by-step transaction input"""
+    from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, CallbackQueryHandler, filters
     
-    try:
-        success = await sheets_service.add_transaction(
-            user_id=user_id,
-            amount=user_data.get('amount'),
-            description=user_data.get('description'),
-            category=user_data.get('selected_category'),
-            transaction_type=user_data.get('transaction_type')
-        )
-        
-        if success:
-            type_icon = "💰" if user_data['transaction_type'] == 'income' else "💸"
-            await update.callback_query.edit_message_text(
-                f"✅ Transaksi berhasil dicatat!\n\n"
-                f"{type_icon} *{user_data['transaction_type'].title()}:* {format_currency(user_data['amount'])}\n"
-                f"📝 *Deskripsi:* {user_data['description']}\n"
-                f"🏷️ *Kategori:* {user_data['selected_category']}",
-                parse_mode=ParseMode.MARKDOWN
-            )
-        else:
-            await update.callback_query.edit_message_text("❌ Gagal menyimpan transaksi.")
-            
-        # Clear user data
-        context.user_data.clear()
-        
-    except Exception as e:
-        logger.error(f"Error processing transaction with category: {e}")
-        await update.callback_query.edit_message_text("❌ Terjadi kesalahan.")
+    return ConversationHandler(
+        entry_points=[
+            CommandHandler('income', income_command),
+            CommandHandler('expense', expense_command),
+            CallbackQueryHandler(handle_callback, pattern="^(add_income|add_expense)$")
+        ],
+        states={
+            WAITING_FOR_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_amount)],
+            WAITING_FOR_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_description)],
+            WAITING_FOR_DATE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_date),
+                CallbackQueryHandler(process_date, pattern="^date_")
+            ],
+            WAITING_FOR_CONFIRMATION: [CallbackQueryHandler(process_confirmation, pattern="^confirm_")]
+        },
+        fallbacks=[
+            CommandHandler('cancel', lambda u, c: ConversationHandler.END),
+            CommandHandler('start', start_command)
+        ],
+        per_message=False
+    )

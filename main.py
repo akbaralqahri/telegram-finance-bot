@@ -83,12 +83,17 @@ class FinanceBot:
             # Create application
             self.application = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
             
-            # Add command handlers
+            # Import conversation handler
+            from bot.handlers import get_conversation_handler
+            
+            # Add conversation handler for step-by-step transaction input
+            conv_handler = get_conversation_handler()
+            self.application.add_handler(conv_handler)
+            
+            # Add command handlers (non-conversation)
             command_handlers = [
                 CommandHandler("start", start_command),
                 CommandHandler("help", help_command),
-                CommandHandler("income", income_command),
-                CommandHandler("expense", expense_command),
                 CommandHandler("report", report_command),
                 CommandHandler("search", search_command),
                 CommandHandler("ai", ai_command),
@@ -99,9 +104,9 @@ class FinanceBot:
             for handler in command_handlers:
                 self.application.add_handler(handler)
             
-            # Add message and callback handlers
-            self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-            self.application.add_handler(CallbackQueryHandler(handle_callback))
+            # Add message and callback handlers (with lower priority)
+            self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message), group=1)
+            self.application.add_handler(CallbackQueryHandler(handle_callback), group=1)
             
             # Add error handler
             self.application.add_error_handler(self.error_handler)

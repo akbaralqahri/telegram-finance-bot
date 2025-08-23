@@ -208,7 +208,20 @@ class GoogleSheetsService:
     
     async def add_transaction(self, user_id: int, amount: float, description: str, 
                             category: str, transaction_type: str) -> bool:
-        """Add a new transaction to user's spreadsheet"""
+        """Add a new transaction to user's spreadsheet (with current date/time)"""
+        return await self.add_transaction_with_date(
+            user_id=user_id,
+            amount=amount,
+            description=description,
+            category=category,
+            transaction_type=transaction_type,
+            transaction_date=datetime.now()
+        )
+    
+    async def add_transaction_with_date(self, user_id: int, amount: float, description: str, 
+                                      category: str, transaction_type: str, 
+                                      transaction_date: datetime) -> bool:
+        """Add a new transaction to user's spreadsheet with custom date"""
         try:
             # Ensure user sheet exists
             if user_id not in self.user_sheets:
@@ -219,7 +232,7 @@ class GoogleSheetsService:
             spreadsheet = self.user_sheets[user_id]
             transactions_sheet = spreadsheet.worksheet('Transactions')
             
-            # Get current balance
+            # Get current balance (for balance calculation, we need to consider transaction order)
             current_balance = await self.get_user_balance(user_id)
             
             # Calculate new balance
@@ -232,30 +245,29 @@ class GoogleSheetsService:
                 income_amount = ''
                 expense_amount = amount
             
-            # Prepare row data
-            now = datetime.now()
+            # Prepare row data with custom date
             row_data = [
-                now.strftime('%Y-%m-%d'),  # Date
-                now.strftime('%H:%M:%S'),  # Time
-                category,                  # Category
-                description,              # Description
-                income_amount,            # Income
-                expense_amount,           # Expense
-                new_balance,             # Balance
-                user_id                  # User ID
+                transaction_date.strftime('%Y-%m-%d'),  # Custom Date
+                transaction_date.strftime('%H:%M:%S'),  # Custom Time
+                category,                               # Category
+                description,                           # Description
+                income_amount,                         # Income
+                expense_amount,                        # Expense
+                new_balance,                          # Balance
+                user_id                               # User ID
             ]
             
             # Add transaction
             transactions_sheet.append_row(row_data)
             
-            # Update monthly summary
-            await self._update_monthly_summary(user_id, amount, transaction_type, now)
+            # Update monthly summary for the transaction date's month
+            await self._update_monthly_summary(user_id, amount, transaction_type, transaction_date)
             
-            logger.info(f"Transaction added for user {user_id}: {transaction_type} {amount}")
+            logger.info(f"Transaction added for user {user_id}: {transaction_type} {amount} on {transaction_date.strftime('%Y-%m-%d')}")
             return True
             
         except Exception as e:
-            logger.error(f"Error adding transaction for user {user_id}: {e}")
+            logger.error(f"Error adding transaction with date for user {user_id}: {e}")
             return False
     
     async def get_user_balance(self, user_id: int) -> float:
